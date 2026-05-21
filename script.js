@@ -23,7 +23,7 @@
     viewWeekly: $('view-weekly'),
     viewMonthly: $('view-monthly'),
     viewSettings: $('view-settings'),
-    viewLifeGoals: $('view-life-goals'),
+
 
 
     todayLabel: $('todayLabel'),
@@ -464,50 +464,6 @@
     // no-op (static UI)
   }
 
-  const LIFE_GOALS_KEY = 'habitTracker.lifeGoals.v1';
-
-  let lifeGoalsDraft = '';
-  let lifeGoalsSaveTimer = null;
-
-  function loadLifeGoals() {
-    try {
-      lifeGoalsDraft = localStorage.getItem(LIFE_GOALS_KEY) || '';
-      if (els.viewLifeGoals && els.viewLifeGoals.querySelector('#lifeGoalsTextarea')) {
-        els.viewLifeGoals.querySelector('#lifeGoalsTextarea').value = lifeGoalsDraft;
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  function saveLifeGoals() {
-    try {
-      const ta = document.getElementById('lifeGoalsTextarea');
-      const text = ta ? ta.value : '';
-      lifeGoalsDraft = text;
-      localStorage.setItem(LIFE_GOALS_KEY, text);
-      const status = $('lifeGoalsStatus');
-      if (status) status.textContent = 'Saved';
-      if (lifeGoalsSaveTimer) {
-        clearTimeout(lifeGoalsSaveTimer);
-        lifeGoalsSaveTimer = null;
-      }
-      // clear status shortly after
-      setTimeout(() => {
-        if (status) status.textContent = '';
-      }, 1200);
-    } catch {
-      // ignore
-    }
-  }
-
-  function scheduleAutoSaveLifeGoals() {
-    if (lifeGoalsSaveTimer) clearTimeout(lifeGoalsSaveTimer);
-    lifeGoalsSaveTimer = setTimeout(() => {
-      // Only persist if the textarea exists (view might not be open)
-      if (document.getElementById('lifeGoalsTextarea')) saveLifeGoals();
-    }, 400);
-  }
 
 
   function renderAll() {
@@ -515,12 +471,8 @@
     if (!els.viewWeekly.classList.contains('is-hidden')) renderWeekly();
     if (!els.viewMonthly.classList.contains('is-hidden')) renderMonthly();
     if (!els.viewSettings.classList.contains('is-hidden')) renderSettings();
-
-    // Life Goals
-    if (els.viewLifeGoals && !els.viewLifeGoals.classList.contains('is-hidden')) {
-      loadLifeGoals();
-    }
   }
+
 
 
 
@@ -611,20 +563,7 @@
       showView('dashboard');
     });
 
-    // Life Goals events (no limit textarea)
-    const lifeTextarea = $('lifeGoalsTextarea');
-    const saveBtn = $('saveGoalsBtn');
-    if (lifeTextarea) lifeTextarea.value = (localStorage.getItem(LIFE_GOALS_KEY) || '');
 
-    if (lifeTextarea) {
-      // autosave + instant draft persistence
-      lifeTextarea.addEventListener('input', () => {
-        scheduleAutoSaveLifeGoals();
-      });
-    }
-    if (saveBtn) {
-      saveBtn.addEventListener('click', saveLifeGoals);
-    }
 
     // keyboard
 
