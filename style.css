@@ -211,16 +211,61 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 .weekly-table table{width:100%}
 
 @media only screen and (max-width: 768px) {
-  .container {
-    flex-direction: column;
-    width: 100%;
+  .app{
+    grid-template-columns: 1fr;
   }
 
-  h1 {
-    font-size: 20px;
+  .sidebar{
+    border-right:none;
+    border-bottom:1px solid var(--border);
+    padding:14px;
   }
 
-  button {
-    width: 100%;
+  .main{
+    padding:14px;
+  }
+
+  .grid{
+    grid-template-columns: 1fr;
+  }
+
+  .grid--two{
+    grid-template-columns: 1fr;
+  }
+
+  .topbar{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+
+  .top-right{
+    width:100%;
+    display:flex;
+    justify-content:flex-end;
+  }
+
+  .habit-name{
+    max-width: 170px;
+  }
+
+  .habit-actions{
+    gap:8px;
+  }
+
+  .check-btn{
+    width:40px;
+    height:40px;
+  }
+
+  .monthly-table,
+  .weekly-table{
+    overflow-x:auto;
+  }
+
+  .delete-btn{
+    width:40px;
+    height:40px;
+    border-radius:14px;
   }
 }
+

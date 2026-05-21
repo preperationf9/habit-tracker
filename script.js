@@ -12,7 +12,9 @@
     // dashboard
     viewDashboard: $('view-dashboard'),
     viewWeekly: $('view-weekly'),
+    viewMonthly: $('view-monthly'),
     viewSettings: $('view-settings'),
+
     todayLabel: $('todayLabel'),
     motivationQuote: $('motivationQuote'),
     habitList: $('habitList'),
@@ -27,7 +29,12 @@
     weeklyTable: $('weeklyTable'),
     clearWeekBtn: $('clearWeekBtn'),
 
+    monthRangePill: $('monthRangePill'),
+    monthlyTable: $('monthlyTable'),
+    clearMonthBtn: $('clearMonthBtn'),
+
     clearAllBtn: $('clearAllBtn'),
+
 
     // modal
     habitModal: $('habitModal'),
@@ -115,7 +122,13 @@
     });
   }
 
+  function deleteHabitById(habitId) {
+    state.habits = state.habits.filter((h) => h.id !== habitId);
+    save();
+  }
+
   function renderDashboard() {
+
     els.todayLabel.textContent = formatToday();
     els.motivationQuote.textContent = pickMotivation();
 
@@ -125,6 +138,7 @@
     els.habitList.innerHTML = '';
 
     let doneCount = 0;
+
     let totalCount = 0;
 
     for (const habit of habits) {
@@ -186,10 +200,29 @@
 
       item.appendChild(left);
       item.appendChild(actions);
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'delete-btn';
+      delBtn.textContent = '🗑';
+      delBtn.title = 'Delete habit';
+
+      delBtn.addEventListener('click', () => {
+        const ok = confirm(`Delete habit: ${habit.name}?`);
+        if (!ok) return;
+        deleteHabitById(habit.id);
+        renderAll();
+      });
+
+      actions.appendChild(delBtn);
+
+      item.appendChild(left);
+      item.appendChild(actions);
       els.habitList.appendChild(item);
     }
 
     els.emptyState.classList.toggle('is-hidden', habits.length !== 0);
+
 
     const pct = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
     els.progressMeta.textContent = `${pct}% completed`;
@@ -227,8 +260,114 @@
     return streak;
   }
 
+  function monthKeys(anchor = new Date()) {
+    const y = anchor.getFullYear();
+    const m = anchor.getMonth();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const keys = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      keys.push(todayKey(new Date(y, m, d)));
+    }
+    return keys;
+  }
+
+  function getMonthLabel(anchor = new Date()) {
+    return anchor.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+  }
+
+  function renderMonthly() {
+    const anchor = new Date();
+    const keys = monthKeys(anchor);
+    els.monthRangePill.textContent = getMonthLabel(anchor);
+
+    const habits = state.habits;
+
+    if (!habits.length) {
+      els.monthlyTable.innerHTML = '<div class="empty"><div class="empty-ic">★</div><div class="empty-title">No data yet</div><div class="empty-sub">Add a habit to see monthly tracking.</div></div>';
+      return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.style.overflowX = 'auto';
+
+    const t = document.createElement('table');
+    t.style.width = '100%';
+    t.style.borderCollapse = 'collapse';
+
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+
+    const th0 = document.createElement('th');
+    th0.textContent = 'Habit';
+    th0.style.textAlign = 'left';
+    th0.style.padding = '10px';
+    th0.style.color = 'rgba(232,238,252,.8)';
+    trh.appendChild(th0);
+
+    for (const k of keys) {
+      const d = new Date(k + 'T00:00:00');
+      const label = d.toLocaleDateString(undefined, { day: '2-digit' });
+      const th = document.createElement('th');
+      th.textContent = label;
+      th.style.padding = '10px';
+      th.style.color = 'rgba(232,238,252,.75)';
+      trh.appendChild(th);
+    }
+
+    thead.appendChild(trh);
+    t.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (const habit of habits) {
+      const tr = document.createElement('tr');
+
+      const tdName = document.createElement('td');
+      tdName.textContent = habit.name;
+      tdName.style.padding = '10px';
+      tdName.style.borderTop = '1px solid rgba(255,255,255,.08)';
+      tdName.style.fontWeight = '800';
+      tr.appendChild(tdName);
+
+      for (const k of keys) {
+        const td = document.createElement('td');
+        td.style.padding = '10px';
+        td.style.borderTop = '1px solid rgba(255,255,255,.08)';
+
+        const status = habit.history?.[k];
+        let symbol = '—';
+        let color = 'rgba(232,238,252,.55)';
+        if (status === 'done') { symbol = '✓'; color = 'rgba(34,197,94,.95)'; }
+        if (status === 'not_done') { symbol = '✕'; color = 'rgba(239,68,68,.95)'; }
+        td.textContent = symbol;
+        td.style.color = color;
+        td.style.textAlign = 'center';
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+    }
+
+    t.appendChild(tbody);
+    wrapper.appendChild(t);
+
+    els.monthlyTable.innerHTML = '';
+    els.monthlyTable.appendChild(wrapper);
+  }
+
+  function clearMonth() {
+    const keys = monthKeys();
+    for (const habit of state.habits) {
+      if (!habit.history) habit.history = {};
+      for (const k of keys) delete habit.history[k];
+    }
+    save();
+    renderAll();
+  }
+
   function renderWeekly() {
+
     const keys = weekKeys();
+
     els.weekRangePill.textContent = `${keys[0].slice(5).replace('-', '/')} - ${keys[keys.length - 1].slice(5).replace('-', '/')}`;
 
     const habits = state.habits;
@@ -312,8 +451,10 @@
   function renderAll() {
     renderDashboard();
     if (!els.viewWeekly.classList.contains('is-hidden')) renderWeekly();
+    if (!els.viewMonthly.classList.contains('is-hidden')) renderMonthly();
     if (!els.viewSettings.classList.contains('is-hidden')) renderSettings();
   }
+
 
   function addHabit({ name, targetDays }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
@@ -343,7 +484,9 @@
       b.addEventListener('click', () => {
         showView(b.dataset.view);
         if (b.dataset.view === 'weekly') renderWeekly();
+        if (b.dataset.view === 'monthly') renderMonthly();
       });
+
     });
 
     els.newHabitBtn.addEventListener('click', () => {
@@ -371,6 +514,15 @@
     els.clearWeekBtn.addEventListener('click', () => {
       clearWeek();
     });
+
+    if (els.clearMonthBtn) {
+      els.clearMonthBtn.addEventListener('click', () => {
+        clearMonth();
+        renderAll();
+      });
+    }
+
+
 
     els.clearAllBtn.addEventListener('click', () => {
       const ok = confirm('Delete all habits and history stored in this browser?');
