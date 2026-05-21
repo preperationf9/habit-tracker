@@ -9,13 +9,18 @@
   const els = {
     // nav
     navItems: Array.from(document.querySelectorAll('.nav-item')),
-    // dashboard
+
+    mobileNav: $('mobileNav'),
+    menuBtn: $('menuBtn'),
+
+    // views
     viewDashboard: $('view-dashboard'),
     viewWeekly: $('view-weekly'),
     viewMonthly: $('view-monthly'),
     viewSettings: $('view-settings'),
 
     todayLabel: $('todayLabel'),
+
     motivationQuote: $('motivationQuote'),
     habitList: $('habitList'),
     emptyState: $('emptyState'),
@@ -480,14 +485,26 @@
   }
 
   function bindEvents() {
+    // Desktop nav (aside) + Mobile nav buttons (header)
     els.navItems.forEach((b) => {
       b.addEventListener('click', () => {
         showView(b.dataset.view);
         if (b.dataset.view === 'weekly') renderWeekly();
         if (b.dataset.view === 'monthly') renderMonthly();
-      });
 
+        // close mobile menu
+        if (els.mobileNav && els.mobileNav.classList.contains('is-open')) {
+          els.mobileNav.classList.remove('is-open');
+        }
+      });
     });
+
+    if (els.menuBtn && els.mobileNav) {
+      els.menuBtn.addEventListener('click', () => {
+        els.mobileNav.classList.toggle('is-open');
+      });
+    }
+
 
     els.newHabitBtn.addEventListener('click', () => {
       openModal();

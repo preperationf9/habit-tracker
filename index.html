@@ -53,6 +53,7 @@
     <main class="main">
       <header class="topbar">
         <div class="top-left">
+          <button class="hamburger" id="menuBtn" type="button" aria-label="Open menu">☰</button>
           <h1>Today</h1>
           <div class="sub" id="todayLabel">—</div>
         </div>
@@ -65,7 +66,15 @@
 
           <button class="glow-btn" id="newHabitBtn" type="button">+ Add habit</button>
         </div>
+
+        <nav class="mobile-nav" id="mobileNav" aria-label="Mobile navigation">
+          <button class="nav-item" data-view="dashboard" type="button">Dashboard</button>
+          <button class="nav-item" data-view="weekly" type="button">Weekly</button>
+          <button class="nav-item" data-view="monthly" type="button">Monthly</button>
+          <button class="nav-item" data-view="settings" type="button">Settings</button>
+        </nav>
       </header>
+
 
       <section class="view" id="view-dashboard">
         <div class="grid">

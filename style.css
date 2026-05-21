@@ -211,61 +211,67 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 .weekly-table table{width:100%}
 
 @media only screen and (max-width: 768px) {
-  .app{
-    grid-template-columns: 1fr;
-  }
+  .app{grid-template-columns: 1fr;}
 
-  .sidebar{
-    border-right:none;
-    border-bottom:1px solid var(--border);
-    padding:14px;
-  }
+  .sidebar{display:none;}
 
-  .main{
-    padding:14px;
-  }
+  .main{padding:1rem;}
+  .grid{grid-template-columns: 1fr;}
+  .grid--two{grid-template-columns: 1fr;}
 
-  .grid{
-    grid-template-columns: 1fr;
-  }
+  .topbar{flex-direction:column;align-items:flex-start;gap:10px;}
 
-  .grid--two{
-    grid-template-columns: 1fr;
-  }
-
-  .topbar{
-    flex-direction:column;
-    align-items:flex-start;
-  }
-
-  .top-right{
+  .mobile-nav{
     width:100%;
     display:flex;
-    justify-content:flex-end;
-  }
-
-  .habit-name{
-    max-width: 170px;
-  }
-
-  .habit-actions{
+    flex-direction:column;
     gap:8px;
+    margin-top:10px;
+    max-height:0;
+    overflow:hidden;
+    transition:max-height .18s ease;
+  }
+  .mobile-nav.is-open{max-height:360px;}
+
+  .mobile-nav .nav-item{width:100%;}
+
+  .top-left{width:100%;display:flex;align-items:center;gap:10px;}
+
+  .hamburger{
+    width:44px;
+    height:44px;
+    border-radius:14px;
+    border:1px solid rgba(255,255,255,.18);
+    background:rgba(255,255,255,.04);
+    color:var(--text);
+    cursor:pointer;
+    font-size:20px;
+    line-height:1;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
   }
 
-  .check-btn{
-    width:40px;
-    height:40px;
+  .top-right{width:100%;display:flex;justify-content:flex-end;}
+
+  .habit-item{margin-top:6px;padding:14px 12px;}
+  .habit-name{max-width: 180px;}
+
+  .habit-actions{gap:10px;}
+
+  .check-btn,
+  .delete-btn{
+    width:44px;
+    height:44px;
+    border-radius:14px;
+    flex:0 0 auto;
   }
 
   .monthly-table,
-  .weekly-table{
-    overflow-x:auto;
-  }
+  .weekly-table{overflow-x:auto;}
 
-  .delete-btn{
-    width:40px;
-    height:40px;
-    border-radius:14px;
-  }
+  #view-settings .settings-row{flex-direction:column;align-items:center;text-align:center;}
+  #view-settings .settings-row .danger-btn{width:auto;}
 }
+
 
