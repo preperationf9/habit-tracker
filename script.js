@@ -1,0 +1,394 @@
+(() => {
+  const STORAGE_KEY = 'habitTracker.v1';
+
+  /** @type {{habits: Array<{id:string,name:string,targetDays:number,createdAt:number,history: Record<string, 'done'|'not_done'>}>}} */
+  let state = { habits: [] };
+
+  const $ = (id) => document.getElementById(id);
+
+  const els = {
+    // nav
+    navItems: Array.from(document.querySelectorAll('.nav-item')),
+    // dashboard
+    viewDashboard: $('view-dashboard'),
+    viewWeekly: $('view-weekly'),
+    viewSettings: $('view-settings'),
+    todayLabel: $('todayLabel'),
+    motivationQuote: $('motivationQuote'),
+    habitList: $('habitList'),
+    emptyState: $('emptyState'),
+    progressMeta: $('progressMeta'),
+    progressFill: $('progressFill'),
+    progressPct: $('progressPct'),
+    progressCounts: $('progressCounts'),
+    streakCount: $('streakCount'),
+
+    weekRangePill: $('weekRangePill'),
+    weeklyTable: $('weeklyTable'),
+    clearWeekBtn: $('clearWeekBtn'),
+
+    clearAllBtn: $('clearAllBtn'),
+
+    // modal
+    habitModal: $('habitModal'),
+    habitForm: $('habitForm'),
+    habitNameInput: $('habitNameInput'),
+    habitTargetInput: $('habitTargetInput'),
+    closeModalBtn: $('closeModalBtn'),
+    cancelModalBtn: $('cancelModalBtn'),
+    newHabitBtn: $('newHabitBtn'),
+  };
+
+  function todayKey(d = new Date()) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function weekKeys(end = new Date()) {
+    // last 7 days including end
+    const keys = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(end);
+      d.setDate(d.getDate() - i);
+      keys.push(todayKey(d));
+    }
+    return keys;
+  }
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) state = JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+    if (!state.habits) state.habits = [];
+  }
+
+  function save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function formatToday() {
+    const d = new Date();
+    return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  }
+
+  function pickMotivation() {
+    const quotes = [
+      'Small steps every day.',
+      'Consistency beats intensity.',
+      'Do it now. Make it a habit.',
+      'Your future self will thank you.',
+      'Focus on progress, not perfection.'
+    ];
+    const i = Math.floor(Math.random() * quotes.length);
+    return quotes[i];
+  }
+
+  function openModal() {
+    els.habitModal.classList.add('is-open');
+    els.habitModal.setAttribute('aria-hidden', 'false');
+    els.habitNameInput.focus();
+  }
+
+  function closeModal() {
+    els.habitModal.classList.remove('is-open');
+    els.habitModal.setAttribute('aria-hidden', 'true');
+    els.habitForm.reset();
+    els.habitTargetInput.value = 7;
+  }
+
+  function showView(view) {
+    const map = {
+      dashboard: els.viewDashboard,
+      weekly: els.viewWeekly,
+      settings: els.viewSettings,
+    };
+    for (const [k, el] of Object.entries(map)) {
+      el.classList.toggle('is-hidden', k !== view);
+    }
+    els.navItems.forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.view === view);
+    });
+  }
+
+  function renderDashboard() {
+    els.todayLabel.textContent = formatToday();
+    els.motivationQuote.textContent = pickMotivation();
+
+    const tKey = todayKey();
+    const habits = state.habits;
+
+    els.habitList.innerHTML = '';
+
+    let doneCount = 0;
+    let totalCount = 0;
+
+    for (const habit of habits) {
+      totalCount += 1;
+      const status = habit.history?.[tKey];
+      if (status === 'done') doneCount += 1;
+
+      const item = document.createElement('div');
+      item.className = 'habit-item';
+      item.dataset.habitId = habit.id;
+
+      const left = document.createElement('div');
+      left.className = 'habit-left';
+
+      const name = document.createElement('div');
+      name.className = 'habit-name';
+      name.textContent = habit.name;
+
+      const meta = document.createElement('div');
+      meta.className = 'habit-meta';
+      meta.textContent = `${habit.targetDays} days/week`;
+
+      left.appendChild(name);
+      left.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'habit-actions';
+
+      const doneBtn = document.createElement('button');
+      doneBtn.type = 'button';
+      doneBtn.className = 'check-btn';
+      doneBtn.textContent = '✓';
+      doneBtn.title = 'Done';
+      if (status === 'done') doneBtn.classList.add('is-done');
+
+      const ndBtn = document.createElement('button');
+      ndBtn.type = 'button';
+      ndBtn.className = 'check-btn';
+      ndBtn.textContent = '✕';
+      ndBtn.title = 'Not done';
+      if (status === 'not_done') ndBtn.classList.add('is-nd');
+
+      doneBtn.addEventListener('click', () => {
+        habit.history = habit.history || {};
+        habit.history[tKey] = 'done';
+        save();
+        renderAll();
+      });
+
+      ndBtn.addEventListener('click', () => {
+        habit.history = habit.history || {};
+        habit.history[tKey] = 'not_done';
+        save();
+        renderAll();
+      });
+
+      actions.appendChild(doneBtn);
+      actions.appendChild(ndBtn);
+
+      item.appendChild(left);
+      item.appendChild(actions);
+      els.habitList.appendChild(item);
+    }
+
+    els.emptyState.classList.toggle('is-hidden', habits.length !== 0);
+
+    const pct = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
+    els.progressMeta.textContent = `${pct}% completed`;
+    els.progressFill.style.width = `${pct}%`;
+    els.progressPct.textContent = `${pct}%`;
+    els.progressCounts.textContent = `${doneCount} / ${totalCount}`;
+
+    els.streakCount.textContent = String(computeStreak());
+  }
+
+  function computeStreak() {
+    // Streak = consecutive days where all habits created so far are marked done.
+    // If no habits, streak is 0.
+    if (!state.habits.length) return 0;
+
+    const keys = [];
+    const end = new Date();
+    // compute up to 365 days back to avoid infinite
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(end);
+      d.setDate(d.getDate() - i);
+      keys.push(todayKey(d));
+    }
+
+    let streak = 0;
+    for (const k of keys) {
+      let allDone = true;
+      for (const habit of state.habits) {
+        const status = habit.history?.[k];
+        if (status !== 'done') { allDone = false; break; }
+      }
+      if (!allDone) break;
+      streak++;
+    }
+    return streak;
+  }
+
+  function renderWeekly() {
+    const keys = weekKeys();
+    els.weekRangePill.textContent = `${keys[0].slice(5).replace('-', '/')} - ${keys[keys.length - 1].slice(5).replace('-', '/')}`;
+
+    const habits = state.habits;
+    const table = document.createElement('div');
+    table.className = 'weekly-table';
+
+    if (!habits.length) {
+      els.weeklyTable.innerHTML = '<div class="empty"><div class="empty-ic">☆</div><div class="empty-title">No data yet</div><div class="empty-sub">Add a habit to see weekly tracking.</div></div>';
+      return;
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.style.overflowX = 'auto';
+
+    const t = document.createElement('table');
+    t.style.width = '100%';
+    t.style.borderCollapse = 'collapse';
+
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+
+    const th0 = document.createElement('th');
+    th0.textContent = 'Habit';
+    th0.style.textAlign = 'left';
+    th0.style.padding = '10px';
+    th0.style.color = 'rgba(232,238,252,.8)';
+    trh.appendChild(th0);
+
+    for (const k of keys) {
+      const th = document.createElement('th');
+      const d = new Date(k + 'T00:00:00');
+      th.textContent = d.toLocaleDateString(undefined, { weekday: 'short' });
+      th.style.padding = '10px';
+      th.style.color = 'rgba(232,238,252,.75)';
+      trh.appendChild(th);
+    }
+
+    thead.appendChild(trh);
+    t.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    for (const habit of habits) {
+      const tr = document.createElement('tr');
+
+      const tdName = document.createElement('td');
+      tdName.textContent = habit.name;
+      tdName.style.padding = '10px';
+      tdName.style.borderTop = '1px solid rgba(255,255,255,.08)';
+      tdName.style.fontWeight = '800';
+      tr.appendChild(tdName);
+
+      for (const k of keys) {
+        const td = document.createElement('td');
+        td.style.padding = '10px';
+        td.style.borderTop = '1px solid rgba(255,255,255,.08)';
+
+        const status = habit.history?.[k];
+        let symbol = '—';
+        let color = 'rgba(232,238,252,.55)';
+        if (status === 'done') { symbol = '✓'; color = 'rgba(34,197,94,.95)'; }
+        if (status === 'not_done') { symbol = '✕'; color = 'rgba(239,68,68,.95)'; }
+        td.textContent = symbol;
+        td.style.color = color;
+        td.style.textAlign = 'center';
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+    }
+
+    t.appendChild(tbody);
+    wrapper.appendChild(t);
+    els.weeklyTable.innerHTML = '';
+    els.weeklyTable.appendChild(wrapper);
+  }
+
+  function renderSettings() {
+    // no-op (static UI)
+  }
+
+  function renderAll() {
+    renderDashboard();
+    if (!els.viewWeekly.classList.contains('is-hidden')) renderWeekly();
+    if (!els.viewSettings.classList.contains('is-hidden')) renderSettings();
+  }
+
+  function addHabit({ name, targetDays }) {
+    const id = String(Date.now()) + Math.random().toString(16).slice(2);
+    state.habits.unshift({ id, name, targetDays, createdAt: Date.now(), history: {} });
+    save();
+  }
+
+  function clearWeek() {
+    const keys = weekKeys();
+    for (const habit of state.habits) {
+      if (!habit.history) habit.history = {};
+      for (const k of keys) delete habit.history[k];
+    }
+    save();
+    renderAll();
+  }
+
+  function clearAll() {
+    state = { habits: [] };
+    save();
+    renderAll();
+    renderWeekly();
+  }
+
+  function bindEvents() {
+    els.navItems.forEach((b) => {
+      b.addEventListener('click', () => {
+        showView(b.dataset.view);
+        if (b.dataset.view === 'weekly') renderWeekly();
+      });
+    });
+
+    els.newHabitBtn.addEventListener('click', () => {
+      openModal();
+    });
+
+    els.closeModalBtn.addEventListener('click', closeModal);
+    els.cancelModalBtn.addEventListener('click', closeModal);
+
+    els.habitModal.addEventListener('click', (e) => {
+      if (e.target === els.habitModal) closeModal();
+    });
+
+    els.habitForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = els.habitNameInput.value.trim();
+      const targetDays = Number(els.habitTargetInput.value || 7);
+      if (!name) return;
+
+      addHabit({ name, targetDays: Math.max(1, Math.min(7, targetDays)) });
+      closeModal();
+      renderAll();
+    });
+
+    els.clearWeekBtn.addEventListener('click', () => {
+      clearWeek();
+    });
+
+    els.clearAllBtn.addEventListener('click', () => {
+      const ok = confirm('Delete all habits and history stored in this browser?');
+      if (!ok) return;
+      clearAll();
+      showView('dashboard');
+    });
+
+    // keyboard
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && els.habitModal.classList.contains('is-open')) closeModal();
+    });
+  }
+
+  // init
+  load();
+  bindEvents();
+  showView('dashboard');
+  renderAll();
+})();
+

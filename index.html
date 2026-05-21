@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Habits — Daily Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Sidebar">
+      <div class="side-top">
+        <div class="brand">
+          <div class="logo">✓</div>
+          <div>
+            <div class="brand-name">Daily Habits</div>
+            <div class="brand-sub">Offline • Private • Premium</div>
+          </div>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="Navigation">
+        <button class="nav-item is-active" data-view="dashboard" type="button">
+          <span class="nav-ic">⌁</span>
+          Dashboard
+        </button>
+        <button class="nav-item" data-view="weekly" type="button">
+          <span class="nav-ic">▦</span>
+          Weekly
+        </button>
+        <button class="nav-item" data-view="settings" type="button">
+          <span class="nav-ic">⚙</span>
+          Settings
+        </button>
+      </nav>
+
+      <div class="side-bottom">
+        <div class="quote-wrap">
+          <div class="quote-title">Motivation</div>
+          <div class="quote" id="motivationQuote">Loading…</div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="top-left">
+          <h1>Today</h1>
+          <div class="sub" id="todayLabel">—</div>
+        </div>
+
+        <div class="top-right">
+          <div class="streak" title="Current streak">
+            <div class="streak-num" id="streakCount">0</div>
+            <div class="streak-label">streak</div>
+          </div>
+
+          <button class="glow-btn" id="newHabitBtn" type="button">+ Add habit</button>
+        </div>
+      </header>
+
+      <section class="view" id="view-dashboard">
+        <div class="grid">
+          <div class="card card--wide">
+            <div class="card-head">
+              <div>
+                <div class="card-title">Daily progress</div>
+                <div class="card-sub" id="progressMeta">0% completed</div>
+              </div>
+              <div class="pill" id="weekRangePill">—</div>
+            </div>
+
+            <div class="progress">
+              <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+              <div class="progress-values">
+                <span id="progressPct">0%</span>
+                <span class="muted" id="progressCounts">0 / 0</span>
+              </div>
+            </div>
+
+            <div class="hint">
+              Mark each habit with a check (done) or cross (not done). Resets automatically at midnight.
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Habit checklist</div>
+            <div class="card-sub">Tap to toggle for today.</div>
+            <div class="habit-list" id="habitList" aria-live="polite"></div>
+
+            <div class="empty" id="emptyState">
+              <div class="empty-ic">✦</div>
+              <div class="empty-title">No habits yet</div>
+              <div class="empty-sub">Add a habit to start tracking today.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view is-hidden" id="view-weekly">
+        <div class="grid grid--two">
+          <div class="card card--wide">
+            <div class="card-head">
+              <div>
+                <div class="card-title">Weekly tracking</div>
+                <div class="card-sub">Last 7 days for each habit.</div>
+              </div>
+              <button class="ghost-btn" id="clearWeekBtn" type="button">Reset week</button>
+            </div>
+
+            <div class="weekly-table" id="weeklyTable"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view is-hidden" id="view-settings">
+        <div class="grid grid--two">
+          <div class="card card--wide">
+            <div class="card-title">Settings</div>
+            <div class="card-sub">Everything is saved in localStorage (offline).</div>
+
+            <div class="settings-row">
+              <div>
+                <div class="setting-label">Reset all data</div>
+                <div class="setting-sub">Removes habits and history stored in this browser.</div>
+              </div>
+              <button class="danger-btn" id="clearAllBtn" type="button">Delete all</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add Habit Modal -->
+  <div class="modal" id="habitModal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Add a new habit</div>
+          <div class="modal-sub">Example: Drink water • Walk • Study • Meditate</div>
+        </div>
+        <button class="icon-btn" id="closeModalBtn" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <form id="habitForm" class="modal-body">
+        <label class="field">
+          <span class="field-label">Habit name</span>
+          <input type="text" id="habitNameInput" placeholder="e.g., Read 20 pages" required maxlength="60" />
+        </label>
+
+        <label class="field">
+          <span class="field-label">Target days/week</span>
+          <input type="number" id="habitTargetInput" placeholder="7" min="1" max="7" value="7" />
+        </label>
+
+        <div class="modal-actions">
+          <button class="glow-btn" type="submit">Add habit</button>
+          <button class="ghost-btn" id="cancelModalBtn" type="button">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
+
