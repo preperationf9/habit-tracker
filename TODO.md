@@ -1,12 +1,10 @@
-# TODO
+# TODO - Life Goals feature
 
-- [x] Inspect current responsive structure (sidebar grid, habit list, settings layout)
-- [ ] Update `style.css` mobile breakpoint styles:
-  - [ ] Ensure sidebar hidden below 768px and main uses full width with comfortable padding
-  - [ ] Improve habit card layout + typography for mobile readability
-  - [x] Ensure touch targets are >= 44x44 (✓ ✕ Delete) and spaced for accurate tapping
-  - [x] Optimize Settings layout on mobile (single-column, centered)
-- [x] Verify no missing CSS class (e.g., `.delete-btn`) and align with existing button styles
+- [ ] Add “Life Goals” nav link to sidebar (below Dashboard/Settings).
+- [ ] Add “Life Goals” nav link to mobile nav.
+- [ ] Add new view section (#view-life-goals) with textarea + “Save Goals” button.
+- [ ] Add matching dark themed CSS for editor layout.
+- [ ] Update script.js routing to support view-life-goals.
+- [ ] Implement persistence in localStorage with no character limit.
+- [ ] Verify: typing persists across refresh and Save Goals button updates storage.
 
-
-- [ ] Quick manual test instructions (browser)

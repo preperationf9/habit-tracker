@@ -189,11 +189,7 @@ button{font-family:inherit}
 }
 .check-btn.is-done{border-color:rgba(34,197,94,.55);background:rgba(34,197,94,.14)}
 .check-btn.is-nd{border-color:rgba(239,68,68,.50);background:rgba(239,68,68,.10)}
-.delete-btn{
-  /* Alert Red for the dustbin icon */
-  color:rgba(239,68,68,.95);
-}
-
+.delete-btn{color:rgba(239,68,68,.95)}
 
 .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px 10px;border:1px dashed rgba(255,255,255,.18);border-radius:18px;background:rgba(255,255,255,.02)}
 
@@ -215,7 +211,6 @@ button{font-family:inherit}
 input{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.16);border-radius:14px;color:var(--text);padding:12px 12px;outline:none}
 input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end}
-
 .modal-actions .ghost-btn, .modal-actions .glow-btn{flex:0 0 auto}
 
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.10)}
@@ -223,6 +218,27 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 .setting-sub{color:var(--muted);font-size:12px;margin-top:6px;line-height:1.4}
 
 .weekly-table table{width:100%}
+
+/* Life Goals */
+.life-goals-textarea{
+  width:100%;
+  min-height:420px;
+  resize:vertical;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:16px;
+  color:var(--text);
+  padding:14px 14px;
+  outline:none;
+  font-size:14px;
+  line-height:1.6;
+}
+.life-goals-textarea:focus{
+  box-shadow:0 0 0 4px var(--ring);
+  border-color:rgba(124,92,255,.55);
+}
+.life-goals-actions{display:flex;align-items:center;gap:12px;margin-top:12px;}
+.life-goals-status{color:var(--muted);font-size:12px;white-space:nowrap;}
 
 @media only screen and (max-width: 768px) {
   .app{grid-template-columns: 1fr;}
@@ -249,7 +265,6 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   .habit-meta{font-size:14px;}
 
   .habit-list{gap:12px;}
-
 
   .topbar{flex-direction:column;align-items:flex-start;gap:10px;}
 
@@ -289,13 +304,6 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   .habit-item{margin-top:6px;padding:16px 12px;}
   .habit-name{max-width: 240px;white-space:normal;}
 
-  /* Touch targets already enforced globally; keep spacing nicer on mobile */
-  .habit-actions{gap:12px;}
-
-
-  .monthly-table,
-  .weekly-table{overflow-x:auto;}
-
   /* Settings: keep it centered and full-width on mobile */
   #view-settings .grid--two{grid-template-columns: 1fr;}
   #view-settings .card{width:100%;}
@@ -303,8 +311,11 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   #view-settings .card-sub{ text-align:center;}
   #view-settings .settings-row{flex-direction:column;align-items:center;text-align:center;}
   #view-settings .settings-row .danger-btn{width:auto;}
+
+  .monthly-table,
+  .weekly-table{overflow-x:auto;}
+
+  /* Life Goals */
+  .life-goals-textarea{min-height:320px;}
 }
-
-
-
 

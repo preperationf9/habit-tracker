@@ -40,6 +40,12 @@
           Settings
         </button>
 
+        <button class="nav-item" data-view="life-goals" type="button">
+          <span class="nav-ic">✦</span>
+          Life Goals
+        </button>
+
+
       </nav>
 
       <div class="side-bottom">
@@ -72,7 +78,9 @@
           <button class="nav-item" data-view="weekly" type="button">Weekly</button>
           <button class="nav-item" data-view="monthly" type="button">Monthly</button>
           <button class="nav-item" data-view="settings" type="button">Settings</button>
+          <button class="nav-item" data-view="life-goals" type="button">Life Goals</button>
         </nav>
+
       </header>
 
 
@@ -169,6 +177,31 @@
           </div>
         </div>
       </section>
+
+      <section class="view is-hidden" id="view-life-goals">
+        <div class="grid grid--two">
+          <div class="card card--wide">
+            <div class="card-head">
+              <div>
+                <div class="card-title">Life Goals</div>
+                <div class="card-sub">Write your long-term dreams, what you want to become, and your big life purposes.</div>
+              </div>
+              <div class="pill">No limits</div>
+            </div>
+
+            <label class="field" for="lifeGoalsTextarea" style="margin-top:6px;">
+              <span class="field-label">Your goals</span>
+              <textarea id="lifeGoalsTextarea" class="life-goals-textarea" placeholder="Start writing..." spellcheck="true"></textarea>
+            </label>
+
+            <div class="life-goals-actions">
+              <button class="glow-btn" id="saveGoalsBtn" type="button">Save Goals</button>
+              <span class="life-goals-status" id="lifeGoalsStatus" aria-live="polite"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
     </main>
   </div>
 
