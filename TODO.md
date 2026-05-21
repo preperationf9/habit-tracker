@@ -8,3 +8,5 @@
 - [ ] Implement persistence in localStorage with no character limit.
 - [ ] Verify: typing persists across refresh and Save Goals button updates storage.
 
+
+- [ ] Quick manual test instructions (browser)
