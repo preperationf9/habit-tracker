@@ -4,11 +4,6 @@
   /** @type {{habits: Array<{id:string,name:string,targetDays:number,createdAt:number,history: Record<string, 'done'|'not_done'>}>}} */
   let state = { habits: [] };
 
-  let lifeGoalsSaveTimer = null;
-
-
-
-
   const $ = (id) => document.getElementById(id);
 
   const els = {
@@ -23,8 +18,6 @@
     viewWeekly: $('view-weekly'),
     viewMonthly: $('view-monthly'),
     viewSettings: $('view-settings'),
-
-
 
     todayLabel: $('todayLabel'),
 
@@ -46,7 +39,6 @@
     clearMonthBtn: $('clearMonthBtn'),
 
     clearAllBtn: $('clearAllBtn'),
-
 
     // modal
     habitModal: $('habitModal'),
@@ -76,18 +68,33 @@
     return keys;
   }
 
+  function isValidLoadedState(s) {
+    if (!s || typeof s !== 'object') return false;
+    if (!Array.isArray(s.habits)) return false;
+    return true;
+  }
+
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) state = JSON.parse(raw);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw);
+      if (isValidLoadedState(parsed)) {
+        state = parsed;
+      }
     } catch {
-      // ignore
+      // ignore corrupted storage
+      state = { habits: [] };
     }
-    if (!state.habits) state.habits = [];
   }
 
   function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // if storage is full/blocked, silently fail rather than breaking UI
+    }
   }
 
   function formatToday() {
@@ -101,7 +108,7 @@
       'Consistency beats intensity.',
       'Do it now. Make it a habit.',
       'Your future self will thank you.',
-      'Focus on progress, not perfection.'
+      'Focus on progress, not perfection.',
     ];
     const i = Math.floor(Math.random() * quotes.length);
     return quotes[i];
@@ -121,14 +128,17 @@
   }
 
   function showView(view) {
+    // Only toggle views that actually exist in the DOM
     const map = {
       dashboard: els.viewDashboard,
       weekly: els.viewWeekly,
+      monthly: els.viewMonthly,
       settings: els.viewSettings,
-      'life-goals': els.viewLifeGoals,
+      // NOTE: life-goals intentionally omitted because it's not in index.html right now
     };
 
     for (const [k, el] of Object.entries(map)) {
+      if (!el) continue;
       el.classList.toggle('is-hidden', k !== view);
     }
 
@@ -137,14 +147,41 @@
     });
   }
 
-
   function deleteHabitById(habitId) {
     state.habits = state.habits.filter((h) => h.id !== habitId);
     save();
   }
 
-  function renderDashboard() {
+  function computeStreak() {
+    if (!state.habits.length) return 0;
 
+    const keys = [];
+    const end = new Date();
+
+    // compute up to 365 days back to avoid infinite
+    for (let i = 0; i < 365; i++) {
+      const d = new Date(end);
+      d.setDate(d.getDate() - i);
+      keys.push(todayKey(d));
+    }
+
+    let streak = 0;
+    for (const k of keys) {
+      let allDone = true;
+      for (const habit of state.habits) {
+        const status = habit.history?.[k];
+        if (status !== 'done') {
+          allDone = false;
+          break;
+        }
+      }
+      if (!allDone) break;
+      streak++;
+    }
+    return streak;
+  }
+
+  function renderDashboard() {
     els.todayLabel.textContent = formatToday();
     els.motivationQuote.textContent = pickMotivation();
 
@@ -154,11 +191,11 @@
     els.habitList.innerHTML = '';
 
     let doneCount = 0;
-
     let totalCount = 0;
 
     for (const habit of habits) {
       totalCount += 1;
+
       const status = habit.history?.[tKey];
       if (status === 'done') doneCount += 1;
 
@@ -214,13 +251,10 @@
       actions.appendChild(doneBtn);
       actions.appendChild(ndBtn);
 
-      item.appendChild(left);
-      item.appendChild(actions);
-
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
       delBtn.className = 'delete-btn';
-      delBtn.textContent = '🗑';
+      delBtn.textContent = '🗑️';
       delBtn.title = 'Delete habit';
 
       delBtn.addEventListener('click', () => {
@@ -234,11 +268,11 @@
 
       item.appendChild(left);
       item.appendChild(actions);
+
       els.habitList.appendChild(item);
     }
 
     els.emptyState.classList.toggle('is-hidden', habits.length !== 0);
-
 
     const pct = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
     els.progressMeta.textContent = `${pct}% completed`;
@@ -247,33 +281,6 @@
     els.progressCounts.textContent = `${doneCount} / ${totalCount}`;
 
     els.streakCount.textContent = String(computeStreak());
-  }
-
-  function computeStreak() {
-    // Streak = consecutive days where all habits created so far are marked done.
-    // If no habits, streak is 0.
-    if (!state.habits.length) return 0;
-
-    const keys = [];
-    const end = new Date();
-    // compute up to 365 days back to avoid infinite
-    for (let i = 0; i < 365; i++) {
-      const d = new Date(end);
-      d.setDate(d.getDate() - i);
-      keys.push(todayKey(d));
-    }
-
-    let streak = 0;
-    for (const k of keys) {
-      let allDone = true;
-      for (const habit of state.habits) {
-        const status = habit.history?.[k];
-        if (status !== 'done') { allDone = false; break; }
-      }
-      if (!allDone) break;
-      streak++;
-    }
-    return streak;
   }
 
   function monthKeys(anchor = new Date()) {
@@ -352,8 +359,14 @@
         const status = habit.history?.[k];
         let symbol = '—';
         let color = 'rgba(232,238,252,.55)';
-        if (status === 'done') { symbol = '✓'; color = 'rgba(34,197,94,.95)'; }
-        if (status === 'not_done') { symbol = '✕'; color = 'rgba(239,68,68,.95)'; }
+        if (status === 'done') {
+          symbol = '✓';
+          color = 'rgba(34,197,94,.95)';
+        }
+        if (status === 'not_done') {
+          symbol = '✕';
+          color = 'rgba(239,68,68,.95)';
+        }
         td.textContent = symbol;
         td.style.color = color;
         td.style.textAlign = 'center';
@@ -381,22 +394,18 @@
   }
 
   function renderWeekly() {
-
     const keys = weekKeys();
 
     els.weekRangePill.textContent = `${keys[0].slice(5).replace('-', '/')} - ${keys[keys.length - 1].slice(5).replace('-', '/')}`;
 
     const habits = state.habits;
-    const table = document.createElement('div');
-    table.className = 'weekly-table';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'weekly-table';
 
     if (!habits.length) {
       els.weeklyTable.innerHTML = '<div class="empty"><div class="empty-ic">☆</div><div class="empty-title">No data yet</div><div class="empty-sub">Add a habit to see weekly tracking.</div></div>';
       return;
     }
-
-    const wrapper = document.createElement('div');
-    wrapper.style.overflowX = 'auto';
 
     const t = document.createElement('table');
     t.style.width = '100%';
@@ -443,8 +452,14 @@
         const status = habit.history?.[k];
         let symbol = '—';
         let color = 'rgba(232,238,252,.55)';
-        if (status === 'done') { symbol = '✓'; color = 'rgba(34,197,94,.95)'; }
-        if (status === 'not_done') { symbol = '✕'; color = 'rgba(239,68,68,.95)'; }
+        if (status === 'done') {
+          symbol = '✓';
+          color = 'rgba(34,197,94,.95)';
+        }
+        if (status === 'not_done') {
+          symbol = '✕';
+          color = 'rgba(239,68,68,.95)';
+        }
         td.textContent = symbol;
         td.style.color = color;
         td.style.textAlign = 'center';
@@ -464,17 +479,12 @@
     // no-op (static UI)
   }
 
-
-
   function renderAll() {
     renderDashboard();
-    if (!els.viewWeekly.classList.contains('is-hidden')) renderWeekly();
-    if (!els.viewMonthly.classList.contains('is-hidden')) renderMonthly();
-    if (!els.viewSettings.classList.contains('is-hidden')) renderSettings();
+    if (els.viewWeekly && !els.viewWeekly.classList.contains('is-hidden')) renderWeekly();
+    if (els.viewMonthly && !els.viewMonthly.classList.contains('is-hidden')) renderMonthly();
+    if (els.viewSettings && !els.viewSettings.classList.contains('is-hidden')) renderSettings();
   }
-
-
-
 
   function addHabit({ name, targetDays }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
@@ -520,7 +530,6 @@
       });
     }
 
-
     els.newHabitBtn.addEventListener('click', () => {
       openModal();
     });
@@ -554,8 +563,6 @@
       });
     }
 
-
-
     els.clearAllBtn.addEventListener('click', () => {
       const ok = confirm('Delete all habits and history stored in this browser?');
       if (!ok) return;
@@ -563,10 +570,7 @@
       showView('dashboard');
     });
 
-
-
     // keyboard
-
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && els.habitModal.classList.contains('is-open')) closeModal();
     });
