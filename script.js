@@ -219,6 +219,77 @@
     state.streak.best = Math.max(state.streak.best || 0, best);
   }
 
+  function ensureXpState() {
+    state.xp = state.xp || { total: 0, awarded: {} };
+    state.xp.awarded = state.xp.awarded || {};
+  }
+
+  const XP_PER_DONE = 10;
+  const LEVELS = [
+    { name: 'Beginner', minXp: 0, nextXp: 200 },
+    { name: 'Focus Master', minXp: 200, nextXp: 500 },
+    { name: 'Discipline King', minXp: 500, nextXp: 1000 },
+  ];
+
+  function getLevelFromXp(totalXp) {
+    const x = Math.max(0, Number(totalXp) || 0);
+    if (x >= LEVELS[2].minXp) return { ...LEVELS[2], progressStart: LEVELS[2].minXp };
+    if (x >= LEVELS[1].minXp) return { ...LEVELS[1], progressStart: LEVELS[1].minXp };
+    return { ...LEVELS[0], progressStart: LEVELS[0].minXp };
+  }
+
+  function awardXpForHabitOnDay(habitId, dateKey, statusBefore, statusAfter) {
+    ensureXpState();
+    state.xp.awarded[habitId] = state.xp.awarded[habitId] || {};
+
+    // Award only on transition: not_done/undefined -> done.
+    if (statusAfter !== 'done') return;
+    if (statusBefore === 'done') return;
+
+    if (state.xp.awarded[habitId][dateKey]) return;
+
+    state.xp.awarded[habitId][dateKey] = true;
+    state.xp.total = (Number(state.xp.total) || 0) + XP_PER_DONE;
+    save();
+
+    // Animate XP gain (best-effort)
+    const xpGain = document.getElementById('xpGain');
+    if (xpGain) {
+      xpGain.textContent = `+${XP_PER_DONE} XP`;
+      xpGain.classList.add('is-show');
+      // retrigger animation
+      requestAnimationFrame(() => {
+        xpGain.classList.remove('is-show');
+        requestAnimationFrame(() => xpGain.classList.add('is-show'));
+      });
+    }
+  }
+
+  function renderXpUi() {
+    ensureXpState();
+    const xpTotalEl = document.getElementById('xpTotal');
+    const xpFillEl = document.getElementById('xpProgressFill');
+    const xpPctEl = document.getElementById('xpProgressPct');
+    const xpNextLabelEl = document.getElementById('xpNextLabel');
+    const levelBadgeEl = document.getElementById('levelBadge');
+
+    const total = Number(state.xp.total) || 0;
+    if (xpTotalEl) xpTotalEl.textContent = String(total);
+
+    const lvl = getLevelFromXp(total);
+    const nextXp = lvl.nextXp;
+    const startXp = lvl.progressStart;
+    const denom = Math.max(1, nextXp - startXp);
+    const progress = Math.max(0, Math.min(1, (total - startXp) / denom));
+    const pct = Math.round(progress * 100);
+
+    if (levelBadgeEl) levelBadgeEl.textContent = lvl.name;
+    if (xpFillEl) xpFillEl.style.width = `${pct}%`;
+    if (xpPctEl) xpPctEl.textContent = `${pct}%`;
+    if (xpNextLabelEl) xpNextLabelEl.textContent = `${total < nextXp ? total : nextXp} / ${nextXp}`;
+  }
+
+
 
   function renderDashboard() {
     els.todayLabel.textContent = formatToday();
@@ -275,7 +346,11 @@
 
       doneBtn.addEventListener('click', () => {
         habit.history = habit.history || {};
-        habit.history[tKey] = 'done';
+        const before = habit.history?.[tKey];
+        const after = 'done';
+
+        habit.history[tKey] = after;
+        awardXpForHabitOnDay(habit.id, tKey, before, after);
         save();
         renderAll();
       });
@@ -286,6 +361,7 @@
         save();
         renderAll();
       });
+
 
       actions.appendChild(doneBtn);
       actions.appendChild(ndBtn);
@@ -325,9 +401,13 @@
     // Topbar streak (existing)
     els.streakCount.textContent = String(state.streak?.current ?? 0);
 
+    // XP UI
+    renderXpUi();
+
     // Dashboard streak cards (new)
     const streakCurrentEl = document.getElementById('streakCurrent');
     const streakBestEl = document.getElementById('streakBest');
+
     if (streakCurrentEl) {
       const v = state.streak?.current ?? 0;
       streakCurrentEl.textContent = `${v} Day${v === 1 ? '' : 's'}`;
@@ -559,11 +639,16 @@
   }
 
   function clearAll() {
-    state = { habits: [], xp: { total: 0, awarded: {} }, streak: { current: 0, best: 0, history: [] } };
+    state = {
+      habits: [],
+      xp: { total: 0, awarded: {} },
+      streak: { current: 0, best: 0, history: [] },
+    };
     save();
     renderAll();
     renderWeekly();
   }
+
 
 
   function bindEvents() {
