@@ -1,8 +1,15 @@
 (() => {
   const STORAGE_KEY = 'habitTracker.v1';
 
-  /** @type {{habits: Array<{id:string,name:string,targetDays:number,createdAt:number,history: Record<string, 'done'|'not_done'>}>}} */
+  /**
+   * @typedef {'done'|'not_done'} HabitStatus
+   * @typedef {{ [dateKey: string]: HabitStatus }} HabitHistory
+   * @typedef {{habits: Array<{id:string,name:string,targetDays:number,createdAt:number,history: HabitHistory}>}} BaseState
+   */
+
+  /** @type {BaseState & {xp?: { total:number, awarded?: Record<string, Record<string, boolean>> }, streak?: { current:number, best:number, history?: Array<{dateKey:string, streak:number}> }} } */
   let state = { habits: [] };
+
 
   const $ = (id) => document.getElementById(id);
 
@@ -81,13 +88,19 @@
 
       const parsed = JSON.parse(raw);
       if (isValidLoadedState(parsed)) {
-        state = parsed;
+        // Backward compatible: older storage only had {habits}
+        state = {
+          habits: parsed.habits,
+          xp: parsed.xp || { total: 0, awarded: {} },
+          streak: parsed.streak || { current: 0, best: 0, history: [] },
+        };
       }
     } catch {
       // ignore corrupted storage
-      state = { habits: [] };
+      state = { habits: [], xp: { total: 0, awarded: {} }, streak: { current: 0, best: 0, history: [] } };
     }
   }
+
 
   function save() {
     try {
@@ -152,34 +165,60 @@
     save();
   }
 
-  function computeStreak() {
+  function getDayDoneCount(dateKey) {
+    let done = 0;
+    for (const habit of state.habits) {
+      if (habit.history?.[dateKey] === 'done') done++;
+    }
+    return done;
+  }
+
+  function computeCurrentStreak() {
     if (!state.habits.length) return 0;
 
-    const keys = [];
     const end = new Date();
-
     // compute up to 365 days back to avoid infinite
     for (let i = 0; i < 365; i++) {
       const d = new Date(end);
       d.setDate(d.getDate() - i);
-      keys.push(todayKey(d));
-    }
-
-    let streak = 0;
-    for (const k of keys) {
-      let allDone = true;
-      for (const habit of state.habits) {
-        const status = habit.history?.[k];
-        if (status !== 'done') {
-          allDone = false;
-          break;
-        }
+      const k = todayKey(d);
+      if (getDayDoneCount(k) === 0) {
+        return i;
       }
-      if (!allDone) break;
-      streak++;
     }
-    return streak;
+    return 365;
   }
+
+  function computeBestStreak() {
+    if (!state.habits.length) return 0;
+
+    // Best streak across the last 365 days.
+    let best = 0;
+    let current = 0;
+
+    const end = new Date();
+    for (let back = 365; back >= 0; back--) {
+      const d = new Date(end);
+      d.setDate(d.getDate() - back);
+      const k = todayKey(d);
+      if (getDayDoneCount(k) > 0) {
+        current++;
+        if (current > best) best = current;
+      } else {
+        current = 0;
+      }
+    }
+    return best;
+  }
+
+  function syncStreakToState() {
+    const current = computeCurrentStreak();
+    const best = computeBestStreak();
+    state.streak = state.streak || { current: 0, best: 0, history: [] };
+    state.streak.current = current;
+    state.streak.best = Math.max(state.streak.best || 0, best);
+  }
+
 
   function renderDashboard() {
     els.todayLabel.textContent = formatToday();
@@ -280,8 +319,25 @@
     els.progressPct.textContent = `${pct}%`;
     els.progressCounts.textContent = `${doneCount} / ${totalCount}`;
 
-    els.streakCount.textContent = String(computeStreak());
+
+    syncStreakToState();
+
+    // Topbar streak (existing)
+    els.streakCount.textContent = String(state.streak?.current ?? 0);
+
+    // Dashboard streak cards (new)
+    const streakCurrentEl = document.getElementById('streakCurrent');
+    const streakBestEl = document.getElementById('streakBest');
+    if (streakCurrentEl) {
+      const v = state.streak?.current ?? 0;
+      streakCurrentEl.textContent = `${v} Day${v === 1 ? '' : 's'}`;
+    }
+    if (streakBestEl) {
+      const v = state.streak?.best ?? 0;
+      streakBestEl.textContent = `${v} Day${v === 1 ? '' : 's'}`;
+    }
   }
+
 
   function monthKeys(anchor = new Date()) {
     const y = anchor.getFullYear();
@@ -503,11 +559,12 @@
   }
 
   function clearAll() {
-    state = { habits: [] };
+    state = { habits: [], xp: { total: 0, awarded: {} }, streak: { current: 0, best: 0, history: [] } };
     save();
     renderAll();
     renderWeekly();
   }
+
 
   function bindEvents() {
     // Desktop nav (aside) + Mobile nav buttons (header)

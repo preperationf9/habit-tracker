@@ -106,11 +106,10 @@
             </div>
           </div>
 
-          <div class="card">
+          <div class="card" id="card-habits">
             <div class="card-title">Habit checklist</div>
             <div class="card-sub">Tap ✓/✗ for today. Use 🗑 to delete.</div>
             <div class="habit-list" id="habitList" aria-live="polite"></div>
-
 
             <div class="empty" id="emptyState">
               <div class="empty-ic">✦</div>
@@ -118,6 +117,105 @@
               <div class="empty-sub">Add a habit to start tracking today.</div>
             </div>
           </div>
+
+          <div class="card" id="card-xp">
+            <div class="card-head" style="margin-bottom:10px;">
+              <div>
+                <div class="card-title">XP & Levels</div>
+                <div class="card-sub">Earn +10 XP per completed habit</div>
+              </div>
+              <div class="pill" id="levelBadge">Beginner</div>
+            </div>
+
+            <div class="xp-total-row">
+              <div class="xp-label">Total XP</div>
+              <div class="xp-value" id="xpTotal">0</div>
+            </div>
+
+            <div class="progress xp-progress">
+              <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div class="progress-fill xp-fill" id="xpProgressFill"></div>
+              </div>
+              <div class="progress-values">
+                <span id="xpProgressPct">0%</span>
+                <span class="muted" id="xpNextLabel">0 / 200</span>
+              </div>
+            </div>
+
+            <div class="xp-gain" id="xpGain" aria-hidden="true"></div>
+          </div>
+
+          <div class="card" id="card-streak">
+            <div class="card-head" style="margin-bottom:10px;">
+              <div>
+                <div class="card-title">🔥 Streak</div>
+                <div class="card-sub">Best-in-class consistency</div>
+              </div>
+            </div>
+
+            <div class="streak-cards">
+              <div class="streak-card streak-card--current">
+                <div class="streak-card-emoji">🔥</div>
+                <div>
+                  <div class="streak-card-label">Current Streak</div>
+                  <div class="streak-card-value" id="streakCurrent">0 Day</div>
+                </div>
+              </div>
+              <div class="streak-card streak-card--best">
+                <div class="streak-card-emoji">🏆</div>
+                <div>
+                  <div class="streak-card-label">Best Streak</div>
+                  <div class="streak-card-value" id="streakBest">0 Day</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card card--wide analytics-card">
+            <div class="card-head">
+              <div>
+                <div class="card-title">Analytics</div>
+                <div class="card-sub">Weekly & monthly progress (auto-updates)</div>
+              </div>
+              <div class="pill" id="completionPill">0% completion</div>
+            </div>
+
+            <div class="analytics-grid">
+              <div class="analytics-metrics">
+                <div class="metric">
+                  <div class="metric-label">Total completed</div>
+                  <div class="metric-value" id="analyticsTotalCompleted">0</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">Missed habits</div>
+                  <div class="metric-value" id="analyticsMissedHabits">0</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">Best habit</div>
+                  <div class="metric-value metric-value--soft" id="analyticsBestHabit">—</div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">Completion percentage</div>
+                  <div class="metric-value" id="analyticsCompletionPct">0%</div>
+                </div>
+              </div>
+
+              <div class="analytics-charts">
+                <div class="chart-section">
+                  <div class="chart-title">Weekly progress</div>
+                  <div class="weekly-bars" id="weeklyBars"></div>
+                </div>
+
+                <div class="chart-section">
+                  <div class="chart-title">Monthly progress</div>
+                  <canvas id="monthlyChart" width="900" height="240" aria-label="Monthly progress chart" role="img"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <div class="analytics-loading" id="analyticsLoading" aria-hidden="true"></div>
+          </div>
+
         </div>
       </section>
 
