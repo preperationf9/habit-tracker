@@ -342,6 +342,12 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   .analytics-metrics{flex:1 1 100%}
   .analytics-charts{flex:1 1 100%}
   canvas#monthlyChart{width:100% !important;height:auto;}
+
+  /* Ensure weekly/monthly tables keep visible cell contents */
+  .weekly-table, .monthly-table { width:100%; overflow-x:auto; }
+  .weekly-table table th, .weekly-table table td,
+  .monthly-table table th, .monthly-table table td { padding:10px; white-space:nowrap; }
+
   .progress-values{font-size:11px}
 }
 

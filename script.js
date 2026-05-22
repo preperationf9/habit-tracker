@@ -532,7 +532,9 @@
   function renderWeekly() {
     const keys = weekKeys();
 
-    els.weekRangePill.textContent = `${keys[0].slice(5).replace('-', '/')} - ${keys[keys.length - 1].slice(5).replace('-', '/')}`;
+    if (els.weekRangePill) {
+      els.weekRangePill.textContent = `${keys[0].slice(5).replace('-', '/')} - ${keys[keys.length - 1].slice(5).replace('-', '/')}`;
+    }
 
     const habits = state.habits;
     const wrapper = document.createElement('div');
@@ -543,9 +545,11 @@
       return;
     }
 
+    // Create a fresh table every render to avoid layout/cell mismatch.
     const t = document.createElement('table');
     t.style.width = '100%';
     t.style.borderCollapse = 'collapse';
+    t.style.tableLayout = 'fixed';
 
     const thead = document.createElement('thead');
     const trh = document.createElement('tr');
@@ -555,6 +559,7 @@
     th0.style.textAlign = 'left';
     th0.style.padding = '10px';
     th0.style.color = 'rgba(232,238,252,.8)';
+    th0.style.width = '160px';
     trh.appendChild(th0);
 
     for (const k of keys) {
@@ -578,12 +583,16 @@
       tdName.style.padding = '10px';
       tdName.style.borderTop = '1px solid rgba(255,255,255,.08)';
       tdName.style.fontWeight = '800';
+      tdName.style.overflow = 'hidden';
+      tdName.style.textOverflow = 'ellipsis';
+      tdName.style.whiteSpace = 'nowrap';
       tr.appendChild(tdName);
 
       for (const k of keys) {
         const td = document.createElement('td');
         td.style.padding = '10px';
         td.style.borderTop = '1px solid rgba(255,255,255,.08)';
+        td.style.textAlign = 'center';
 
         const status = habit.history?.[k];
         let symbol = '—';
@@ -596,9 +605,9 @@
           symbol = '✕';
           color = 'rgba(239,68,68,.95)';
         }
+
         td.textContent = symbol;
         td.style.color = color;
-        td.style.textAlign = 'center';
         tr.appendChild(td);
       }
 
@@ -607,9 +616,11 @@
 
     t.appendChild(tbody);
     wrapper.appendChild(t);
+
     els.weeklyTable.innerHTML = '';
     els.weeklyTable.appendChild(wrapper);
   }
+
 
   function renderSettings() {
     // no-op (static UI)
