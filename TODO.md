@@ -1,10 +1,10 @@
-# TODO - HabitTracker feature upgrades
+# HabitTracker feature upgrades
 
 ## XP & Levels
-- [ ] Add XP/Level UI elements to `index.html` (cards + progress bar + level badge + XP gain container)
-- [ ] Extend persisted `state` in `script.js` for XP and awarded-per-day tracking
-- [ ] Implement +10 XP awarding only on done transition (avoid duplicate awards)
-- [ ] Add animated “+10 XP” gain effect and instant dashboard update
+- [x] Add XP/Level UI elements to `index.html` (cards + progress bar + level badge + XP gain container)
+- [x] Extend persisted `state` in `script.js` for XP and awarded-per-day tracking
+- [x] Implement +10 XP awarding only on done transition (avoid duplicate awards)
+- [x] Add animated “+10 / -10 XP” gain effect and instant dashboard update
 - [ ] Implement level thresholds + glowing level badge + progress to next level
 
 ## Streak System
@@ -34,4 +34,9 @@
 - [ ] Manual test: streak resets when user misses all habits for a day
 - [ ] Manual test: clearing all data resets XP + streak
 - [ ] Manual test: charts render without errors on refresh
+
+## XP Today-only dynamic update (this work)
+- [x] Compute XP total from *today* habit statuses each render (not stored as incremental counter)
+- [x] Deduct 10 XP immediately on done → not_done transitions (today-only)
+- [x] Ensure real-time progress bar + XP total recalc instantly when toggling check/cross/reset
 

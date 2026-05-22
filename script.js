@@ -220,6 +220,7 @@
   }
 
   function ensureXpState() {
+    // XP is derived from *today* habit statuses, so we keep xp.total for display only.
     state.xp = state.xp || { total: 0, awarded: {} };
     state.xp.awarded = state.xp.awarded || {};
   }
@@ -239,25 +240,26 @@
   }
 
   function awardXpForHabitOnDay(habitId, dateKey, statusBefore, statusAfter) {
+    // Deprecated by derived today-only XP; kept only to optionally animate.
+    // XP total itself is recomputed from today's habit statuses each render.
     ensureXpState();
-    state.xp.awarded[habitId] = state.xp.awarded[habitId] || {};
 
-    // Award only on transition: not_done/undefined -> done.
-    if (statusAfter !== 'done') return;
-    if (statusBefore === 'done') return;
-
-    if (state.xp.awarded[habitId][dateKey]) return;
-
-    state.xp.awarded[habitId][dateKey] = true;
-    state.xp.total = (Number(state.xp.total) || 0) + XP_PER_DONE;
-    save();
-
-    // Animate XP gain (best-effort)
     const xpGain = document.getElementById('xpGain');
-    if (xpGain) {
+    if (!xpGain) return;
+
+    if (statusAfter === 'done' && statusBefore !== 'done') {
       xpGain.textContent = `+${XP_PER_DONE} XP`;
       xpGain.classList.add('is-show');
-      // retrigger animation
+      requestAnimationFrame(() => {
+        xpGain.classList.remove('is-show');
+        requestAnimationFrame(() => xpGain.classList.add('is-show'));
+      });
+    }
+
+    // Deduction is visual only; real deduction is handled by derived computeXpTotalForToday().
+    if (statusAfter !== 'done' && statusBefore === 'done') {
+      xpGain.textContent = `-${XP_PER_DONE} XP`;
+      xpGain.classList.add('is-show');
       requestAnimationFrame(() => {
         xpGain.classList.remove('is-show');
         requestAnimationFrame(() => xpGain.classList.add('is-show'));
@@ -265,15 +267,28 @@
     }
   }
 
+  function computeXpTotalForToday() {
+    const tKey = todayKey();
+    let doneCount = 0;
+    for (const habit of state.habits) {
+      if (habit.history?.[tKey] === 'done') doneCount += 1;
+    }
+    return doneCount * XP_PER_DONE;
+  }
+
   function renderXpUi() {
     ensureXpState();
+
+    // Today-only derived XP (real-time). XP = 10 * number of habits marked done today.
+    const total = computeXpTotalForToday();
+    state.xp.total = total;
+
     const xpTotalEl = document.getElementById('xpTotal');
     const xpFillEl = document.getElementById('xpProgressFill');
     const xpPctEl = document.getElementById('xpProgressPct');
     const xpNextLabelEl = document.getElementById('xpNextLabel');
     const levelBadgeEl = document.getElementById('levelBadge');
 
-    const total = Number(state.xp.total) || 0;
     if (xpTotalEl) xpTotalEl.textContent = String(total);
 
     const lvl = getLevelFromXp(total);
@@ -350,7 +365,8 @@
         const after = 'done';
 
         habit.history[tKey] = after;
-        awardXpForHabitOnDay(habit.id, tKey, before, after);
+        // +10 only for done transition; XP total is derived from today's statuses.
+        if (before !== 'done') awardXpForHabitOnDay(habit.id, tKey, before, after);
         save();
         renderAll();
       });
