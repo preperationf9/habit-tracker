@@ -1,46 +1,26 @@
-# HabitTracker feature upgrades
+# TODO - HabitTracker UI/UX Premium + Mobile Fixes
 
-## XP & Levels
-- [x] Add XP/Level UI elements to `index.html` (cards + progress bar + level badge + XP gain container)
-- [x] Extend persisted `state` in `script.js` for XP and awarded-per-day tracking
-- [x] Implement +10 XP awarding only on done transition (avoid duplicate awards)
-- [x] Add animated “+10 / -10 XP” gain effect and instant dashboard update
-- [ ] Implement level thresholds + glowing level badge + progress to next level
+## Plan (approved)
+- [ ] Update mobile UI: mobile-first spacing, typography (16px+), bigger touch targets.
+- [ ] Replace current mobile nav with fixed **bottom navigation** (Home / Habits / Stats / Profile) using one-hand layout.
+- [ ] Add Landing/WOW hero section (gradient heading, animated glow button, smooth scroll) + mobile-first layout.
+- [ ] Upgrade habit dashboard “addictive” feel: streak visuals/glow, achievements badges placeholders, XP dopamine pop (existing + extend).
+- [ ] Improve analytics: populate weekly & monthly progress + best habit + missed habits + completion%.
+- [ ] Premium dark styling: glassmorphism blur cards, neon glow borders, soft shadows, smooth transitions.
+- [ ] Empty state: illustration-like icon, motivational text, animated CTA.
+- [ ] Loading: skeleton loading + fade transitions.
 
-## Streak System
-- [ ] Add streak card (current + best) to `index.html`
-- [ ] Implement streak rules: increment if >=1 habit done for the day; reset if 0 done
-- [ ] Track and persist streak history/best in `script.js`
-- [ ] Add streak glow animation and ensure mobile responsive
+## Implementation phases
+- [ ] Phase 1: Layout/CSS responsiveness + bottom nav + hide sidebar on mobile.
+- [ ] Phase 2: Hero/landing section + smooth entry.
+- [ ] Phase 3: JS logic: analytics computation + animations + (streak/badges if UI added).
+- [ ] Phase 4: Skeleton/empty/loading states.
 
-## Habit Status Colors
-- [ ] Add yellow pending status logic and visual style
-- [ ] Enhance checkbox interactions (glow/transition/active animations)
-- [ ] Ensure weekly/monthly symbols follow green/red and pending where applicable
-
-## Dashboard Analytics
-- [ ] Add analytics card containers to `index.html`
-- [ ] Compute weekly + monthly progress metrics in `script.js`
-- [ ] Implement modern dark charts (canvas-based) for monthly graph
-- [ ] Compute and display: best habit, missed habits, total completed, completion %
-- [ ] Ensure analytics auto-update after each completion toggle
-
-## General UI Improvements
-- [ ] Add neon glassmorphism styling in `style.css` for new components
-- [ ] Verify responsiveness on <=768px
-
-## Validation
-- [ ] Manual test: XP increments once per (habit, day) when marked done
-- [ ] Manual test: streak resets when user misses all habits for a day
-- [ ] Manual test: clearing all data resets XP + streak
-- [ ] Manual test: charts render without errors on refresh
-
-## XP Today-only dynamic update (this work)
-- [x] Compute XP total from *today* habit statuses each render (not stored as incremental counter)
-- [x] Deduct 10 XP immediately on done → not_done transitions (today-only)
-- [x] Ensure real-time progress bar + XP total recalc instantly when toggling check/cross/reset
-
-## Bugfix: Monthly tracking blank
-- [x] Add runtime guards and rewrite `renderMonthly()` to restore horizontal calendar grid (days across top, habits as rows)
+## Validation checklist
+- [ ] On mobile width (~<=768px), bottom nav is fixed and thumb-friendly.
+- [ ] Tap targets meet minimum size (>=44px where applicable).
+- [ ] Empty state looks premium and not boring.
+- [ ] Weekly/monthly analytics render without console errors.
+- [ ] Loading/skeleton appears on initial render.
 
 

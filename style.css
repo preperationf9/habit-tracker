@@ -10,7 +10,13 @@
   --danger:#ef4444;
   --ring:rgba(124,92,255,.45);
   --border:rgba(255,255,255,.12);
+
+  /* Mobile premium scale */
+  --tap:44px;
+  --radius:20px;
 }
+
+
 
 *{box-sizing:border-box}
 html,body{height:100%}
