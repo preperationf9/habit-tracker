@@ -123,7 +123,7 @@
       'Your future self will thank you.',
       'Focus on progress, not perfection.',
     ];
-    const i = Math.floor(Math.random() * quotes.length);
+
     return quotes[i];
   }
 
