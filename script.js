@@ -543,6 +543,8 @@
         td.style.padding = '10px';
         td.style.borderTop = '1px solid rgba(255,255,255,.08)';
         td.style.textAlign = 'center';
+        td.style.whiteSpace = 'nowrap';
+        td.style.fontWeight = '800';
 
         const status = habit.history?.[k];
 
