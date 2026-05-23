@@ -483,7 +483,11 @@
 
     const wrapper = document.createElement('div');
     wrapper.className = 'monthly-table-wrapper';
+    // Mobile: keep the horizontal calendar scrollable.
     wrapper.style.overflowX = 'auto';
+    wrapper.style.overflowY = 'hidden';
+    wrapper.style.webkitOverflowScrolling = 'touch';
+    wrapper.style.width = '100%';
 
     const t = document.createElement('table');
     t.className = 'monthly-grid';
