@@ -158,7 +158,12 @@
     els.navItems.forEach((b) => {
       b.classList.toggle('is-active', b.dataset.view === view);
     });
+
+    // Ensure Monthly DOM is populated whenever it becomes visible.
+    if (view === 'monthly') renderMonthly();
+    if (view === 'weekly') renderWeekly();
   }
+
 
   function deleteHabitById(habitId) {
     state.habits = state.habits.filter((h) => h.id !== habitId);
