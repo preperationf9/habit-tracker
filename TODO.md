@@ -40,3 +40,7 @@
 - [x] Deduct 10 XP immediately on done → not_done transitions (today-only)
 - [x] Ensure real-time progress bar + XP total recalc instantly when toggling check/cross/reset
 
+## Bugfix: Monthly tracking blank
+- [x] Add runtime guards and rewrite `renderMonthly()` to restore horizontal calendar grid (days across top, habits as rows)
+
+

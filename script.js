@@ -456,24 +456,42 @@
   }
 
   function renderMonthly() {
+    // Runtime guards: this view must never break the whole UI.
+    if (!els.monthlyTable || !els.monthRangePill) {
+      // eslint-disable-next-line no-console
+      console.warn('Monthly UI elements missing:', {
+        monthlyTable: !!els.monthlyTable,
+        monthRangePill: !!els.monthRangePill,
+      });
+      return;
+    }
+
     const anchor = new Date();
     const keys = monthKeys(anchor);
     els.monthRangePill.textContent = getMonthLabel(anchor);
 
-    const habits = state.habits;
+    const habits = state.habits || [];
 
     if (!habits.length) {
-      els.monthlyTable.innerHTML = '<div class="empty"><div class="empty-ic">★</div><div class="empty-title">No data yet</div><div class="empty-sub">Add a habit to see monthly tracking.</div></div>';
+      els.monthlyTable.innerHTML =
+        '<div class="empty"><div class="empty-ic">★</div><div class="empty-title">No data yet</div><div class="empty-sub">Add a habit to see monthly tracking.</div></div>';
       return;
     }
 
+    // Always wipe and rebuild to avoid partially rendered/blank states.
+    els.monthlyTable.innerHTML = '';
+
     const wrapper = document.createElement('div');
+    wrapper.className = 'monthly-table-wrapper';
     wrapper.style.overflowX = 'auto';
 
     const t = document.createElement('table');
+    t.className = 'monthly-grid';
     t.style.width = '100%';
     t.style.borderCollapse = 'collapse';
+    t.style.tableLayout = 'fixed';
 
+    // Header: day numbers across the top.
     const thead = document.createElement('thead');
     const trh = document.createElement('tr');
 
@@ -485,19 +503,22 @@
     trh.appendChild(th0);
 
     for (const k of keys) {
-      const d = new Date(k + 'T00:00:00');
-      const label = d.toLocaleDateString(undefined, { day: '2-digit' });
+      const [yyyy, mm, dd] = k.split('-');
+      const label = String(dd).padStart(2, '0');
       const th = document.createElement('th');
       th.textContent = label;
       th.style.padding = '10px';
       th.style.color = 'rgba(232,238,252,.75)';
+      th.style.textAlign = 'center';
       trh.appendChild(th);
     }
 
     thead.appendChild(trh);
     t.appendChild(thead);
 
+    // Body: one row per habit, cells with ✓ / ✕ / —.
     const tbody = document.createElement('tbody');
+
     for (const habit of habits) {
       const tr = document.createElement('tr');
 
@@ -512,21 +533,23 @@
         const td = document.createElement('td');
         td.style.padding = '10px';
         td.style.borderTop = '1px solid rgba(255,255,255,.08)';
+        td.style.textAlign = 'center';
 
         const status = habit.history?.[k];
+
         let symbol = '—';
         let color = 'rgba(232,238,252,.55)';
+
         if (status === 'done') {
           symbol = '✓';
           color = 'rgba(34,197,94,.95)';
-        }
-        if (status === 'not_done') {
+        } else if (status === 'not_done') {
           symbol = '✕';
           color = 'rgba(239,68,68,.95)';
         }
+
         td.textContent = symbol;
         td.style.color = color;
-        td.style.textAlign = 'center';
         tr.appendChild(td);
       }
 
@@ -535,8 +558,6 @@
 
     t.appendChild(tbody);
     wrapper.appendChild(t);
-
-    els.monthlyTable.innerHTML = '';
     els.monthlyTable.appendChild(wrapper);
   }
 
