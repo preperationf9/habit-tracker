@@ -412,8 +412,9 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   .weekly-table table td,
   .monthly-table table th,
   .monthly-table table td{
-    padding:8px 8px;
+    padding:10px 10px;
   }
+
 
   .weekly-table table th:first-child,
   .monthly-table table th:first-child,
