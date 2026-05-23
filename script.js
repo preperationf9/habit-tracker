@@ -485,15 +485,19 @@
     wrapper.className = 'monthly-table-wrapper';
     // Mobile: keep the horizontal calendar scrollable.
     wrapper.style.overflowX = 'auto';
-    wrapper.style.overflowY = 'hidden';
+    wrapper.style.overflowY = 'auto';
     wrapper.style.webkitOverflowScrolling = 'touch';
     wrapper.style.width = '100%';
+    // Avoid shrinking the table to 0 width on small screens.
+    wrapper.style.maxWidth = '100%';
 
     const t = document.createElement('table');
     t.className = 'monthly-grid';
     t.style.width = '100%';
     t.style.borderCollapse = 'collapse';
     t.style.tableLayout = 'fixed';
+    // Ensure the table is wide enough so the wrapper scrolls instead of collapsing.
+    t.style.minWidth = '600px';
 
     // Header: day numbers across the top.
     const thead = document.createElement('thead');
