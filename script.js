@@ -483,12 +483,11 @@
 
     const wrapper = document.createElement('div');
     wrapper.className = 'monthly-table-wrapper';
-    // Mobile: keep the horizontal calendar scrollable.
+    // Horizontal scrolling for day-columns. Avoid vertical overflow quirks on mobile.
     wrapper.style.overflowX = 'auto';
-    wrapper.style.overflowY = 'auto';
+    wrapper.style.overflowY = 'visible';
     wrapper.style.webkitOverflowScrolling = 'touch';
     wrapper.style.width = '100%';
-    // Avoid shrinking the table to 0 width on small screens.
     wrapper.style.maxWidth = '100%';
 
     const t = document.createElement('table');
