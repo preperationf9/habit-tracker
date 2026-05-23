@@ -503,12 +503,13 @@
     trh.appendChild(th0);
 
     for (const k of keys) {
-      const [yyyy, mm, dd] = k.split('-');
+      const [, , dd] = k.split('-');
       const label = String(dd).padStart(2, '0');
       const th = document.createElement('th');
       th.textContent = label;
       th.style.padding = '10px';
-      th.style.color = 'rgba(232,238,252,.75)';
+      // Bright text for visibility on dark background.
+      th.style.color = 'rgba(255,255,255,.92)';
       th.style.textAlign = 'center';
       trh.appendChild(th);
     }
