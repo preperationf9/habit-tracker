@@ -367,7 +367,74 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   .progress-values{font-size:11px}
 }
 
-/* Prevent horizontal scrolling from any accidental widths */
-*{max-width:100%}
+/* ---- Responsive table fixes (mobile-first) ---- */
+/* Avoid % width constraints that can break fixed/scrollable tables on small screens */
+.weekly-table,
+.monthly-table,
+.monthly-table-wrapper{
+  max-width:100%;
+}
+
+/* Ensure wrappers scroll smoothly and tables keep their column geometry */
+.weekly-table{
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+.monthly-table{
+  overflow-x:hidden; /* wrapper controls scroll */
+}
+
+.monthly-table-wrapper{
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+/* Make cells consistent to prevent “misalignment/congestion” */
+.weekly-table table,
+.monthly-table table{
+  border-collapse:separate;
+  border-spacing:0;
+}
+
+.weekly-table table th,
+.weekly-table table td,
+.monthly-table table th,
+.monthly-table table td{
+  border:0;
+  vertical-align:middle;
+  line-height:1.2;
+}
+
+/* Small portrait phones */
+@media (max-width: 420px){
+  .weekly-table table th,
+  .weekly-table table td,
+  .monthly-table table th,
+  .monthly-table table td{
+    padding:8px 8px;
+  }
+
+  .weekly-table table th:first-child,
+  .monthly-table table th:first-child,
+  .weekly-table table td:first-child,
+  .monthly-table table td:first-child{
+    padding:10px 8px;
+    min-width:140px;
+    position:sticky; /* Habit name stays visible */
+    left:0;
+    z-index:2;
+    background:rgba(11,18,32,.97);
+    backdrop-filter:saturate(1.1) blur(6px);
+  }
+
+  .monthly-table table thead th:first-child{
+    z-index:3;
+  }
+}
+
+/* Prevent accidental horizontal overflow while keeping layout correct */
+html, body{overflow-x:hidden}
+
 
 
