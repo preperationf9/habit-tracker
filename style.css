@@ -307,7 +307,9 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   width:100%;
   border-collapse:collapse;
   table-layout:fixed;
-  min-width:720px;
+
+  /* Responsive min width: keeps equal gaps on any device width */
+  min-width: max(720px, 100%);
 }
 #view-monthly .monthly-grid th{white-space:nowrap;}
 
