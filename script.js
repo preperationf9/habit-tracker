@@ -124,8 +124,10 @@
       'Focus on progress, not perfection.',
     ];
 
-    return quotes[i];
+    const idx = Math.floor(Math.random() * quotes.length);
+    return quotes[idx];
   }
+
 
   function openModal() {
     els.habitModal.classList.add('is-open');
