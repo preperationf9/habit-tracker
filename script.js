@@ -618,10 +618,13 @@
       const th = document.createElement('th');
       const d = new Date(k + 'T00:00:00');
       th.textContent = d.toLocaleDateString(undefined, { weekday: 'short' });
-      th.style.padding = '10px';
+      th.style.padding = '10px 6px';
       th.style.color = 'rgba(232,238,252,.75)';
+      th.style.fontSize = '12px';
+      th.style.whiteSpace = 'nowrap';
       trh.appendChild(th);
     }
+
 
     thead.appendChild(trh);
     t.appendChild(thead);
@@ -639,6 +642,7 @@
       tdName.style.textOverflow = 'ellipsis';
       tdName.style.whiteSpace = 'nowrap';
       tr.appendChild(tdName);
+
 
       for (const k of keys) {
         const td = document.createElement('td');
@@ -672,6 +676,7 @@
     els.weeklyTable.innerHTML = '';
     els.weeklyTable.appendChild(wrapper);
   }
+
 
 
   function renderSettings() {

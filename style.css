@@ -332,7 +332,11 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   }
   .mobile-nav.is-open{max-height:360px;}
   .mobile-nav .nav-item{width:100%;}
+
+  /* Weekly table header overlap fix */
+  .weekly-table table th{font-size:12px; padding:10px 6px; white-space:nowrap;}
 }
+
 
 /* Small portrait phones */
 @media (max-width: 390px){
