@@ -333,6 +333,14 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   .mobile-nav.is-open{max-height:360px;}
   .mobile-nav .nav-item{width:100%;}
 
+  /* Ensure mobile views don't overlap any fixed containers */
+  main{padding-bottom:0;}
+  #view-monthly{position:relative;}
+
+  /* Monthly tables built via JS may contain wide tables; prevent overlay issues */
+  #view-monthly .monthly-table-wrapper{position:relative; z-index:1;}
+
+
   /* Weekly table header overlap fix */
   .weekly-table table th{font-size:12px; padding:10px 6px; white-space:nowrap;}
 }
