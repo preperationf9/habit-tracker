@@ -23,8 +23,9 @@
     // views
     viewDashboard: $('view-dashboard'),
     viewWeekly: $('view-weekly'),
-    viewMonthly: $('view-monthly'),
+    // Monthly removed from UI
     viewSettings: $('view-settings'),
+
 
     todayLabel: $('todayLabel'),
 
@@ -161,8 +162,6 @@
       b.classList.toggle('is-active', b.dataset.view === view);
     });
 
-    // Ensure Monthly DOM is populated whenever it becomes visible.
-    if (view === 'monthly') renderMonthly();
     if (view === 'weekly') renderWeekly();
   }
 
@@ -457,7 +456,8 @@
     return anchor.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
   }
 
-  function renderMonthly() {
+  function renderMonthly_removed() {
+
     // Runtime guards: this view must never break the whole UI.
     if (!els.monthlyTable || !els.monthRangePill) {
       // eslint-disable-next-line no-console
