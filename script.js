@@ -452,6 +452,14 @@
     return keys;
   }
 
+  function formatMonthDayNumber(key) {
+    // key: YYYY-MM-DD
+    const parts = key.split('-');
+    const dd = parts[2] || '01';
+    return String(Number(dd)).padStart(2, '0');
+  }
+
+
   function getMonthLabel(anchor = new Date()) {
     return anchor.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
   }
