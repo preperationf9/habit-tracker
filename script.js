@@ -23,7 +23,8 @@
     // views
     viewDashboard: $('view-dashboard'),
     viewWeekly: $('view-weekly'),
-    viewMonthly: $('view-monthly'),
+    viewMonthly: null,
+
     viewSettings: $('view-settings'),
 
 

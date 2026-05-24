@@ -31,10 +31,7 @@
           <span class="nav-ic">◻</span>
           Weekly
         </button>
-        <button class="nav-item" data-view="monthly" type="button">
-          <span class="nav-ic">▦</span>
-          Monthly
-        </button>
+
 
         <button class="nav-item" data-view="settings" type="button">
           <span class="nav-ic">⚙</span>
@@ -74,7 +71,7 @@
         <nav class="mobile-nav" id="mobileNav" aria-label="Mobile navigation">
           <button class="nav-item" data-view="dashboard" type="button">Dashboard</button>
           <button class="nav-item" data-view="weekly" type="button">Weekly</button>
-          <button class="nav-item" data-view="monthly" type="button">Monthly</button>
+
           <button class="nav-item" data-view="settings" type="button">Settings</button>
 
 
@@ -209,10 +206,7 @@
                   <div class="weekly-bars" id="weeklyBars"></div>
                 </div>
 
-                <div class="chart-section">
-                  <div class="chart-title">Monthly progress</div>
-                  <canvas id="monthlyChart" width="900" height="240" aria-label="Monthly progress chart" role="img"></canvas>
-                </div>
+
               </div>
             </div>
 
@@ -238,23 +232,7 @@
         </div>
       </section>
 
-      <section class="view is-hidden" id="view-monthly">
-        <div class="grid grid--two">
-          <div class="card card--wide">
-            <div class="card-head">
-              <div>
-                <div class="card-title">Monthly tracking</div>
-                <div class="card-sub">This month for each habit.</div>
-              </div>
-              <button class="ghost-btn" id="clearMonthBtn" type="button">Reset month</button>
-            </div>
 
-            <div class="pill" id="monthRangePill">—</div>
-            <div class="monthly-table" id="monthlyTable" style="margin-top:14px;"></div>
-
-          </div>
-        </div>
-      </section>
 
 
 
