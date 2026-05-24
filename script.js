@@ -23,7 +23,7 @@
     // views
     viewDashboard: $('view-dashboard'),
     viewWeekly: $('view-weekly'),
-    // Monthly removed from UI
+    viewMonthly: $('view-monthly'),
     viewSettings: $('view-settings'),
 
 
@@ -456,7 +456,8 @@
     return anchor.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
   }
 
-  function renderMonthly_removed() {
+  function renderMonthly() {
+
 
     // Runtime guards: this view must never break the whole UI.
     if (!els.monthlyTable || !els.monthRangePill) {
