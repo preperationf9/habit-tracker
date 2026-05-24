@@ -1,26 +1,36 @@
-# TODO - HabitTracker UI/UX Premium + Mobile Fixes
+# HabitTracker feature upgrades
 
-## Plan (approved)
-- [ ] Update mobile UI: mobile-first spacing, typography (16px+), bigger touch targets.
-- [ ] Replace current mobile nav with fixed **bottom navigation** (Home / Habits / Stats / Profile) using one-hand layout.
-- [ ] Add Landing/WOW hero section (gradient heading, animated glow button, smooth scroll) + mobile-first layout.
-- [ ] Upgrade habit dashboard “addictive” feel: streak visuals/glow, achievements badges placeholders, XP dopamine pop (existing + extend).
-- [ ] Improve analytics: populate weekly & monthly progress + best habit + missed habits + completion%.
-- [ ] Premium dark styling: glassmorphism blur cards, neon glow borders, soft shadows, smooth transitions.
-- [ ] Empty state: illustration-like icon, motivational text, animated CTA.
-- [ ] Loading: skeleton loading + fade transitions.
+## XP & Levels
+- [x] Add XP/Level UI elements to `index.html` (cards + progress bar + level badge + XP gain container)
+- [x] Extend persisted `state` in `script.js` for XP and awarded-per-day tracking
+- [x] Implement +10 XP awarding only on done transition (avoid duplicate awards)
+- [x] Add animated “+10 / -10 XP” gain effect and instant dashboard update
+- [ ] Implement level thresholds + glowing level badge + progress to next level
 
-## Implementation phases
-- [ ] Phase 1: Layout/CSS responsiveness + bottom nav + hide sidebar on mobile.
-- [ ] Phase 2: Hero/landing section + smooth entry.
-- [ ] Phase 3: JS logic: analytics computation + animations + (streak/badges if UI added).
-- [ ] Phase 4: Skeleton/empty/loading states.
+## Streak System
+- [x] Fix JS runtime issue blocking habit add/render (undefined motivation index)
+- [ ] Add streak visuals/rules if needed
+- [ ] Persist streak history/best and rule updates
+- [ ] Add streak glow animation and ensure mobile responsive
 
-## Validation checklist
-- [ ] On mobile width (~<=768px), bottom nav is fixed and thumb-friendly.
-- [ ] Tap targets meet minimum size (>=44px where applicable).
-- [ ] Empty state looks premium and not boring.
-- [ ] Weekly/monthly analytics render without console errors.
-- [ ] Loading/skeleton appears on initial render.
+## Dashboard Analytics
+- [ ] Populate analytics metrics + weekly bars + monthly chart from stored history
+- [ ] Compute: best habit, missed habits, total completed, completion %
+- [ ] Ensure analytics auto-update after each completion toggle
 
+## General UI Improvements (Premium Mobile)
+- [ ] Add/replace mobile layout with one-hand fixed **bottom nav**: Home / Habits / Stats / Profile
+- [ ] Make typography mobile-first (16px+), increase spacing/padding, ensure touch targets >=44px
+- [ ] Add glassmorphism + neon glow borders + soft shadows + smooth transitions
+- [ ] Add hero/landing WOW section (mobile-first) with animated glow CTA + smooth scroll
+- [ ] Upgrade empty state (illustration, motivational line, animated CTA)
+- [ ] Add skeleton loading + fade transitions
+
+## Bugfix
+- [x] pickMotivation() runtime error resolved so habit adding works
+
+## Validation
+- [ ] Manual test: habit add shows instantly and persists
+- [ ] Manual test: streak/XP/analytics update on toggle
+- [ ] Manual test: mobile bottom nav doesn't overlap and stays thumb-friendly
 
