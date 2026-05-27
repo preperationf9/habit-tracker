@@ -199,12 +199,16 @@
     if (els.xpFillEl) els.xpFillEl.style.width = `${pct}%`;
     if (els.xpPctEl) els.xpPctEl.textContent = `${pct}%`;
     if (els.xpNextLabelEl) {
-      const shown = total < lvl.nextXp ? total : lvl.nextXp;
-      els.xpNextLabelEl.textContent = `${shown} / ${lvl.nextXp}`;
+      const inBandCurrent = Math.max(0, total - startXp);
+      const inBandTotal = Math.max(1, lvl.nextXp - startXp);
+      els.xpNextLabelEl.textContent = `${inBandCurrent} / ${inBandTotal} XP`;
     }
+
   }
 
   function showView(view, els) {
+    els.currentView = view;
+
     const map = {
       dashboard: els.viewDashboard,
       weekly: els.viewWeekly,
@@ -751,11 +755,9 @@
             renderMonthly(els);
           }
 
-          // XP is part of dashboard summary; keep it updated even if user is on other views.
+          // Keep XP UI updated even if user is not currently on dashboard.
           // This avoids the “stuck” XP/levels UI reported on mobile.
-          if (els.viewDashboard && !els.viewDashboard.classList.contains('is-hidden')) {
-            renderXpUi(els);
-          }
+          renderXpUi(els);
 
         }
       });
