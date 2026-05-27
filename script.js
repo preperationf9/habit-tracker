@@ -165,15 +165,15 @@
   }
 
   function computeXpTotalForToday() {
-    // XP is derived from total number of habits created.
-    // This fixes “XP stuck” / “levels not updating” when UI re-renders.
-    const totalHabits = (state.habits || []).length;
+    const totalHabits = state.habits.length;
     const totalXP = totalHabits * XP_PER_DONE;
-    // Persist into state so it’s always consistent.
-    state.xp = state.xp || { total: 0, awarded: {} };
+
+    state.xp = state.xp || {};
     state.xp.total = totalXP;
+
     return totalXP;
   }
+
 
 
   function renderXpUi(els) {
@@ -591,8 +591,8 @@
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
     state.habits.unshift({ id, name, targetDays, createdAt: Date.now(), history: {} });
 
-    // AUTO XP update (habits count drives XP)
-    state.xp = state.xp || { total: 0, awarded: {} };
+    // XP depends on habit count
+    state.xp = state.xp || {};
     state.xp.total = state.habits.length * XP_PER_DONE;
 
     save();
@@ -600,13 +600,14 @@
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;
   }
+
 
 
   function deleteHabitById(habitId) {
     state.habits = state.habits.filter((h) => h.id !== habitId);
 
-    // AUTO XP update
-    state.xp = state.xp || { total: 0, awarded: {} };
+    // XP depends on habit count
+    state.xp = state.xp || {};
     state.xp.total = state.habits.length * XP_PER_DONE;
 
     save();
@@ -614,6 +615,7 @@
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;
   }
+
 
 
   function clearMonth(els) {
