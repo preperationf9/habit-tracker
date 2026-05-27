@@ -3,15 +3,11 @@
 
   const STORAGE_KEY = 'habitTracker.v1';
 
-  // Premium XP tuning (production-safe constants)
+  // Simple, stable XP model (premium XP removed)
   const XP = {
     completeHabit: 5,
-    createHabit: 10,
-    streak7: 25,
-    noMissDay: 15,
-    // legacy fallback
-    perDoneLegacy: 10,
   };
+
 
 
   /**
@@ -195,72 +191,24 @@
   }
 
   function resolveDailyStreakAndMissedDays(els) {
+    // Premium streak freeze/missed-day recovery removed.
+    // Keep function name to avoid touching the rest of the code.
     ensureStateShape();
 
-    const now = new Date();
-    const today = todayKey(now);
-    // Resolve streak only once per day.
-    if (state.streak.lastResolvedKey === today) {
-      // still refresh UI values below
-    } else {
-      // detect missed days since lastResolvedKey
-      const last = state.streak.lastResolvedKey;
-      if (last) {
-        const lastDate = new Date(last + 'T00:00:00');
-        const todayDate = new Date(today + 'T00:00:00');
-        const diffDays = Math.round((todayDate - lastDate) / 86400000);
-        if (diffDays > 1) {
-          const missed = [];
-          // if user missed (not complete) those days, count.
-          for (let i = 1; i < diffDays; i++) {
-            const d = new Date(lastDate);
-            d.setDate(d.getDate() + i);
-            const k = todayKey(d);
-            if (!isHabitDayComplete(k)) missed.push(k);
-          }
-          if (missed.length) {
-            state.streak.missedDays = missed;
-            // streak freeze: consume freeze to tolerate a single missed day (premium feel)
-            // if missed > freezeCount, reset freeze and streak naturally.
-            // simple model: allow up to freezeCount missed days without breaking current streak.
-            state.streak.freezeUsed = state.streak.freezeUsed || 0;
-            const tolerable = Math.max(0, (state.streak.freezeCount || 1) - (state.streak.freezeUsed || 0));
-            if (missed.length <= tolerable) {
-              state.streak.freezeUsed = (state.streak.freezeUsed || 0) + missed.length;
-            } else {
-              state.streak.freezeUsed = 0;
-            }
-          } else {
-            state.streak.missedDays = [];
-          }
-        }
-      }
+    const today = todayKey(new Date());
 
-      state.streak.lastResolvedKey = today;
-      // reset freezeUsed when user hits a complete day.
-      if (isHabitDayComplete(today)) {
-        state.streak.freezeUsed = 0;
-        state.streak.missedDays = state.streak.missedDays || [];
-      }
-    }
-
-    // Compute streak based on completion days; if freezeUsed>0 and missedDays tolerated, we still use completion streak.
-    // For simplicity + stability: streak = streak up to today, but if freezeUsed>0 and today is complete,
-    // it already included continuity. If today is not complete, streak is 0.
     const current = isHabitDayComplete(today) ? computeStreakUpTo(today) : 0;
     const best = computeBestStreak();
 
     state.streak.current = current;
     state.streak.best = Math.max(state.streak.best || 0, best);
 
-    // Missed-day warning: if streak is broken and user had missed days.
-    if (els && els.missedWarningEl && state.streak.missedDays && state.streak.missedDays.length) {
-      els.missedWarningEl.textContent = `⚠️ Missed ${state.streak.missedDays.length} day(s). Let’s recover slowly.`;
-      els.missedWarningEl.classList.add('is-show');
+    if (els && els.missedWarningEl) {
+      // Always hide missed-day warning after premium removal.
+      els.missedWarningEl.classList.remove('is-show');
     }
-
-    // 7-day / 30-day badge hint can be used by UI.
   }
+
 
 
   function getDayDoneCount(dateKey) {
@@ -277,8 +225,8 @@
     state.xp = state.xp || { total: 0, ledger: {} };
     state.xp.ledger = state.xp.ledger || {};
 
-    state.streak = state.streak || { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] };
-    state.streak.missedDays = state.streak.missedDays || [];
+    state.streak = state.streak || { current: 0, best: 0, lastResolvedKey: null };
+
 
     state.achievements = state.achievements || { unlocked: {} };
 
@@ -291,41 +239,14 @@
     state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
   }
 
-  function getXpLedgerEntry(dateKey, habitId, actionId) {
-    if (!dateKey || !habitId || !actionId) return null;
-    const d = state.xp.ledger[dateKey];
-    if (!d) return null;
-    return d[`${habitId}:${actionId}`] || null;
-  }
-
-  function hasAwarded(dateKey, habitId, actionId) {
-    return !!getXpLedgerEntry(dateKey, habitId, actionId);
-  }
-
-  function awardXpOnce({ dateKey, habitId, actionId, amount, reason }) {
-    if (!amount || amount <= 0) return { awarded: 0, already: true };
-    if (hasAwarded(dateKey, habitId, actionId)) {
-      return { awarded: 0, already: true };
-    }
-
-    state.xp.ledger[dateKey] = state.xp.ledger[dateKey] || {};
-    state.xp.ledger[dateKey][`${habitId}:${actionId}`] = {
-      amount,
-      reason: reason || actionId,
-      at: Date.now(),
-    };
-
-    state.xp.total = Math.max(0, (state.xp.total || 0) + amount);
-    return { awarded: amount, already: false };
-  }
-
+  // Premium XP ledger removed.
+  // XP is stored as a single number: state.xp.total.
   function computeXpTotalForToday() {
-    // Real XP is ledger-based (dynamic).
-    // Keep UI stable even if ledger missing.
     ensureStateShape();
     const total = state.xp.total || 0;
     return total;
   }
+
 
   function renderXpUi(els) {
     if (!els.xpTotalEl || !els.xpFillEl || !els.xpPctEl || !els.xpNextLabelEl || !els.levelBadgeEl) {
@@ -517,8 +438,8 @@
     els.progressPct && (els.progressPct.textContent = `${pct}%`);
     els.progressCounts && (els.progressCounts.textContent = `${doneCount} / ${totalCount}`);
 
-    syncStreakToState();
     if (els.streakCount) els.streakCount.textContent = String(state.streak?.current ?? 0);
+
 
     // Dashboard XP + level
     renderXpUi(els);
@@ -752,9 +673,11 @@
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
     state.habits.unshift({ id, name, targetDays, createdAt: Date.now(), history: {} });
 
-    // XP depends on habit count
+    // Simple XP model: reset total XP (since we removed ledger-based XP)
+    // Users can still earn XP by completing habits.
     state.xp = state.xp || {};
-    state.xp.total = state.habits.length * XP_PER_DONE;
+    if (typeof state.xp.total !== 'number') state.xp.total = 0;
+
 
     save();
     state._dirtyViews = state._dirtyViews || {};
@@ -767,11 +690,8 @@
   function deleteHabitById(habitId) {
     state.habits = state.habits.filter((h) => h.id !== habitId);
 
-    // XP depends on habit count
-    state.xp = state.xp || {};
-    state.xp.total = state.habits.length * XP_PER_DONE;
-
     save();
+
     state._dirtyViews = state._dirtyViews || {};
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;

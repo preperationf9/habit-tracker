@@ -1,44 +1,24 @@
-# TODO — Ultra Premium Habit Tracker Upgrade
+# TODO — Ultra Premium Habit Tracker Upgrade (Cleanup Run)
 
-## Step 1: Repo audit & safety checks
-- [x] Read `index.html`, `script.js`, `style.css`, `manifest.json`
-- [x] Identify current XP/streak/analytics limitations
-- [x] Ensure changes won’t break layout (no redesign)
+## Step 1: Premium removal scope confirmed
+- [x] User chose option 2: remove all premium feature code (keep UI)
 
-## Step 2: Premium Engine (core logic)
-- [x] Implement real dynamic XP + level progression (event ledger)
-- [x] Add streak freeze + missed-day recovery/warnings
+## Step 2: Identify premium code paths
+- [x] Located premium streak freeze/missed-day recovery + XP ledger scaffolding in script.js
+- [x] Found XP_PER_DONE undefined reference risk
 
-- [ ] Add achievements/badges rules + persistence
+## Step 3: Implement simplified engine (no premium)
+- [ ] Replace dynamic XP ledger with stable static XP logic
+- [ ] Replace streak logic with basic consecutive streak (no freeze/missed recovery)
+- [ ] Remove achievements/quests/dailyQuests scaffolding
 
+## Step 4: UI safety
+- [ ] Stop updating missed-warning UI (hide or ignore)
+- [ ] Ensure all buttons (add/delete/reset) work without crashes
 
-## Step 3: Premium UI/UX enhancements (no layout redesign)
-- [ ] Celebration animations (confetti/glow/pulse + floating XP)
-- [ ] Sound effects (WebAudio) for complete/level/achievement/streak
-- [ ] Achievement popup animations + badge cards
-
-## Step 4: Premium Analytics upgrade
-- [ ] Productivity score + consistency %
-- [ ] Best/worst day
-- [ ] Heatmap (GitHub style) inside existing Analytics card
-- [ ] Weekly graph rendering
-
-## Step 5: Habit management upgrades
-- [ ] Habit categories + emoji icons (extend add habit modal)
-- [ ] Search + filter (completed/missed/active)
-- [ ] Drag & drop reorder
-- [ ] Habit notes + mood tracker (minimal UI inside habit rows)
-
-## Step 6: Productivity modes
-- [ ] Focus mode toggle
-- [ ] Pomodoro timer (simple)
-
-## Step 7: Offline/PWA + cloud scaffolding
-- [ ] Add/update `service-worker.js`
-- [ ] Add cloud sync structure in code (optional runtime off)
-
-## Step 8: Quality & safety
-- [ ] Throttle saves + ensure no blank screens
-- [ ] Accessibility pass (aria-live, reduced motion)
-- [ ] Smoke test flows: add habit, mark done/undone, reset week/month, clear all
+## Step 5: Quick smoke test checklist
+- [ ] Add habit + mark done → XP increments
+- [ ] Toggle not done → XP adjusts safely
+- [ ] Streak increases across consecutive complete days
+- [ ] Reset week/month + clear all do not crash
 
