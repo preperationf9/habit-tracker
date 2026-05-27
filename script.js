@@ -165,10 +165,16 @@
   }
 
   function computeXpTotalForToday() {
-    // Keep existing UI meaning: XP is derived from total number of habits created.
+    // XP is derived from total number of habits created.
+    // This fixes “XP stuck” / “levels not updating” when UI re-renders.
     const totalHabits = (state.habits || []).length;
-    return totalHabits * XP_PER_DONE;
+    const totalXP = totalHabits * XP_PER_DONE;
+    // Persist into state so it’s always consistent.
+    state.xp = state.xp || { total: 0, awarded: {} };
+    state.xp.total = totalXP;
+    return totalXP;
   }
+
 
   function renderXpUi(els) {
     if (!els.xpTotalEl || !els.xpFillEl || !els.xpPctEl || !els.xpNextLabelEl || !els.levelBadgeEl) {
@@ -584,19 +590,31 @@
   function addHabit({ name, targetDays }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
     state.habits.unshift({ id, name, targetDays, createdAt: Date.now(), history: {} });
+
+    // AUTO XP update (habits count drives XP)
+    state.xp = state.xp || { total: 0, awarded: {} };
+    state.xp.total = state.habits.length * XP_PER_DONE;
+
     save();
     state._dirtyViews = state._dirtyViews || {};
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;
   }
 
+
   function deleteHabitById(habitId) {
     state.habits = state.habits.filter((h) => h.id !== habitId);
+
+    // AUTO XP update
+    state.xp = state.xp || { total: 0, awarded: {} };
+    state.xp.total = state.habits.length * XP_PER_DONE;
+
     save();
     state._dirtyViews = state._dirtyViews || {};
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;
   }
+
 
   function clearMonth(els) {
     const keys = monthKeys();
@@ -721,14 +739,22 @@
 
           // render only what user sees right now
           const view = els.currentView || 'dashboard';
-          if (view === 'dashboard') renderDashboard(els);
-          else if (view === 'weekly') {
+          if (view === 'dashboard') {
+            renderDashboard(els);
+          } else if (view === 'weekly') {
             state._dirtyViews.weekly = true;
             renderWeekly(els);
           } else if (view === 'monthly') {
             state._dirtyViews.monthly = true;
             renderMonthly(els);
           }
+
+          // XP is part of dashboard summary; keep it updated even if user is on other views.
+          // This avoids the “stuck” XP/levels UI reported on mobile.
+          if (els.viewDashboard && !els.viewDashboard.classList.contains('is-hidden')) {
+            renderXpUi(els);
+          }
+
         }
       });
 
