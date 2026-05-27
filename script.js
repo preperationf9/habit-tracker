@@ -20,10 +20,13 @@
     mobileNav: $('mobileNav'),
     menuBtn: $('menuBtn'),
 
+    // Monthly view elements
+    viewMonthly: $('view-monthly'),
+
     // views
     viewDashboard: $('view-dashboard'),
     viewWeekly: $('view-weekly'),
-    viewMonthly: null,
+    viewMonthly: $('view-monthly'),
 
     viewSettings: $('view-settings'),
 
@@ -164,7 +167,9 @@
     });
 
     if (view === 'weekly') renderWeekly();
+    if (view === 'monthly') renderMonthly();
   }
+
 
 
   function deleteHabitById(habitId) {
@@ -780,10 +785,13 @@
 
     if (els.clearMonthBtn) {
       els.clearMonthBtn.addEventListener('click', () => {
+        const ok = confirm('Reset monthly tracking for this month? This cannot be undone.');
+        if (!ok) return;
         clearMonth();
         renderAll();
       });
     }
+
 
     els.clearAllBtn.addEventListener('click', () => {
       const ok = confirm('Delete all habits and history stored in this browser?');

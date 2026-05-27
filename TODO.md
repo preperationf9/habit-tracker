@@ -34,3 +34,12 @@
 - [ ] Manual test: streak/XP/analytics update on toggle
 - [ ] Manual test: mobile bottom nav doesn't overlap and stays thumb-friendly
 
+## Monthly tracking (new)
+- [x] Add Monthly nav button (desktop sidebar + mobile nav)
+- [x] Add `view-monthly` section with month pill + monthly table + Reset month button
+- [x] Wire `script.js` monthly bindings + render on open
+- [x] Add confirmation popup on Reset month, only then clear monthly data
+- [ ] Manual test: Reset month clears only current month cells, updates UI immediately
+
+
+

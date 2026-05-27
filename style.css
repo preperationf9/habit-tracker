@@ -385,6 +385,8 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   /* Ensure mobile views don't overlap any fixed containers */
   main{padding-bottom:0;}
   #view-monthly{position:relative;}
+  #view-monthly .monthly-table-wrapper{padding-bottom:12px;}
+
 
   /* Weekly table (mobile): horizontal scroll + fixed equal day columns */
   .weekly-table{overflow-x:auto; -webkit-overflow-scrolling:touch;}
