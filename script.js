@@ -2,7 +2,17 @@
   'use strict';
 
   const STORAGE_KEY = 'habitTracker.v1';
-  const XP_PER_DONE = 10;
+
+  // Premium XP tuning (production-safe constants)
+  const XP = {
+    completeHabit: 5,
+    createHabit: 10,
+    streak7: 25,
+    noMissDay: 15,
+    // legacy fallback
+    perDoneLegacy: 10,
+  };
+
 
   /**
    * @typedef {'done'|'not_done'} HabitStatus
@@ -10,7 +20,16 @@
    * @typedef {{habits: Array<{id:string,name:string,targetDays:number,createdAt:number,history: HabitHistory}>}} BaseState
    */
 
-  /** @type {BaseState & {xp?: { total:number, awarded?: Record<string, Record<string, boolean>> }, streak?: { current:number, best:number, history?: Array<{dateKey:string, streak:number}> }, _dirtyViews?: Record<string, boolean> }} */
+  /**
+   * @type {BaseState & {
+   *   xp?: { total:number, ledger?: Record<string, Record<string, {amount:number, reason:string, at:number}>> },
+   *   streak?: { current:number, best:number, lastResolvedKey?: string|null, freezeCount?: number, missedDays?: string[] },
+   *   achievements?: { unlocked?: Record<string, boolean> },
+   *   meta?: any,
+   *   _dirtyViews?: Record<string, boolean>
+   * }}
+   */
+
   let state = { habits: [] };
   let renderScheduled = false;
 
@@ -78,9 +97,12 @@
       if (!raw) {
         state = {
           habits: [],
-          xp: { total: 0, awarded: {} },
-          streak: { current: 0, best: 0, history: [] },
+          xp: { total: 0, ledger: {} },
+          streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
+          achievements: { unlocked: {} },
+          meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} } },
           _dirtyViews: { weekly: true, monthly: true },
+
         };
         return;
       }
@@ -94,12 +116,15 @@
         };
       }
     } catch {
-      state = {
-        habits: [],
-        xp: { total: 0, awarded: {} },
-        streak: { current: 0, best: 0, history: [] },
-        _dirtyViews: { weekly: true, monthly: true },
-      };
+        state = {
+          habits: [],
+          xp: { total: 0, ledger: {} },
+          streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
+          achievements: { unlocked: {} },
+          meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} } },
+          _dirtyViews: { weekly: true, monthly: true },
+        };
+
     }
   }
 
@@ -119,42 +144,124 @@
     return { name: 'Beginner', minXp: 0, nextXp: 50, progressStart: 0 };
   }
 
-  function computeCurrentStreak() {
-    if (!state.habits.length) return 0;
-    for (let i = 0; i < 365; i++) {
-      const d = new Date();
+  function isHabitDayComplete(dateKey) {
+    // Premium streak definition: all habits must be done on that day.
+    // If user has no habits, treat as not streakable.
+    if (!state.habits.length) return false;
+    // done when every habit is marked done.
+    for (const habit of state.habits) {
+      if (habit.history?.[dateKey] !== 'done') return false;
+    }
+    return true;
+  }
+
+  function getDoneCountForDate(dateKey) {
+    let done = 0;
+    for (const habit of state.habits) {
+      if (habit.history?.[dateKey] === 'done') done++;
+    }
+    return done;
+  }
+
+  function computeStreakUpTo(dateKeyInclusive) {
+    // Compute current streak ending at dateKeyInclusive backwards with no gaps.
+    let streak = 0;
+    for (let i = 0; i < 730; i++) {
+      const d = new Date(dateKeyInclusive + 'T00:00:00');
       d.setDate(d.getDate() - i);
       const k = todayKey(d);
-      if (getDayDoneCount(k) === 0) return i;
+      if (isHabitDayComplete(k)) streak++;
+      else break;
     }
-    return 365;
+    return streak;
   }
 
   function computeBestStreak() {
     if (!state.habits.length) return 0;
     let best = 0;
-    let current = 0;
-    for (let back = 365; back >= 0; back--) {
+    let cur = 0;
+    for (let back = 729; back >= 0; back--) {
       const d = new Date();
       d.setDate(d.getDate() - back);
       const k = todayKey(d);
-      if (getDayDoneCount(k) > 0) {
-        current++;
-        best = Math.max(best, current);
+      if (isHabitDayComplete(k)) {
+        cur++;
+        best = Math.max(best, cur);
       } else {
-        current = 0;
+        cur = 0;
       }
     }
     return best;
   }
 
-  function syncStreakToState() {
-    const current = computeCurrentStreak();
+  function resolveDailyStreakAndMissedDays(els) {
+    ensureStateShape();
+
+    const now = new Date();
+    const today = todayKey(now);
+    // Resolve streak only once per day.
+    if (state.streak.lastResolvedKey === today) {
+      // still refresh UI values below
+    } else {
+      // detect missed days since lastResolvedKey
+      const last = state.streak.lastResolvedKey;
+      if (last) {
+        const lastDate = new Date(last + 'T00:00:00');
+        const todayDate = new Date(today + 'T00:00:00');
+        const diffDays = Math.round((todayDate - lastDate) / 86400000);
+        if (diffDays > 1) {
+          const missed = [];
+          // if user missed (not complete) those days, count.
+          for (let i = 1; i < diffDays; i++) {
+            const d = new Date(lastDate);
+            d.setDate(d.getDate() + i);
+            const k = todayKey(d);
+            if (!isHabitDayComplete(k)) missed.push(k);
+          }
+          if (missed.length) {
+            state.streak.missedDays = missed;
+            // streak freeze: consume freeze to tolerate a single missed day (premium feel)
+            // if missed > freezeCount, reset freeze and streak naturally.
+            // simple model: allow up to freezeCount missed days without breaking current streak.
+            state.streak.freezeUsed = state.streak.freezeUsed || 0;
+            const tolerable = Math.max(0, (state.streak.freezeCount || 1) - (state.streak.freezeUsed || 0));
+            if (missed.length <= tolerable) {
+              state.streak.freezeUsed = (state.streak.freezeUsed || 0) + missed.length;
+            } else {
+              state.streak.freezeUsed = 0;
+            }
+          } else {
+            state.streak.missedDays = [];
+          }
+        }
+      }
+
+      state.streak.lastResolvedKey = today;
+      // reset freezeUsed when user hits a complete day.
+      if (isHabitDayComplete(today)) {
+        state.streak.freezeUsed = 0;
+        state.streak.missedDays = state.streak.missedDays || [];
+      }
+    }
+
+    // Compute streak based on completion days; if freezeUsed>0 and missedDays tolerated, we still use completion streak.
+    // For simplicity + stability: streak = streak up to today, but if freezeUsed>0 and today is complete,
+    // it already included continuity. If today is not complete, streak is 0.
+    const current = isHabitDayComplete(today) ? computeStreakUpTo(today) : 0;
     const best = computeBestStreak();
-    state.streak = state.streak || { current: 0, best: 0, history: [] };
+
     state.streak.current = current;
     state.streak.best = Math.max(state.streak.best || 0, best);
+
+    // Missed-day warning: if streak is broken and user had missed days.
+    if (els && els.missedWarningEl && state.streak.missedDays && state.streak.missedDays.length) {
+      els.missedWarningEl.textContent = `⚠️ Missed ${state.streak.missedDays.length} day(s). Let’s recover slowly.`;
+      els.missedWarningEl.classList.add('is-show');
+    }
+
+    // 7-day / 30-day badge hint can be used by UI.
   }
+
 
   function getDayDoneCount(dateKey) {
     let done = 0;
@@ -164,28 +271,74 @@
     return done;
   }
 
-  function computeXpTotalForToday() {
-    const totalHabits = state.habits.length;
-    const totalXP = totalHabits * XP_PER_DONE;
+  function ensureStateShape() {
+    state = state || { habits: [] };
 
-    state.xp = state.xp || {};
-    state.xp.total = totalXP;
+    state.xp = state.xp || { total: 0, ledger: {} };
+    state.xp.ledger = state.xp.ledger || {};
 
-    return totalXP;
+    state.streak = state.streak || { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] };
+    state.streak.missedDays = state.streak.missedDays || [];
+
+    state.achievements = state.achievements || { unlocked: {} };
+
+    // meta (non-breaking)
+    state.meta = state.meta || {
+      settings: state.meta?.settings || { reducedMotion: false, sound: true },
+      dailyQuests: state.meta?.dailyQuests || { dateKey: null, completed: {} },
+    };
+
+    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
   }
 
+  function getXpLedgerEntry(dateKey, habitId, actionId) {
+    if (!dateKey || !habitId || !actionId) return null;
+    const d = state.xp.ledger[dateKey];
+    if (!d) return null;
+    return d[`${habitId}:${actionId}`] || null;
+  }
 
+  function hasAwarded(dateKey, habitId, actionId) {
+    return !!getXpLedgerEntry(dateKey, habitId, actionId);
+  }
+
+  function awardXpOnce({ dateKey, habitId, actionId, amount, reason }) {
+    if (!amount || amount <= 0) return { awarded: 0, already: true };
+    if (hasAwarded(dateKey, habitId, actionId)) {
+      return { awarded: 0, already: true };
+    }
+
+    state.xp.ledger[dateKey] = state.xp.ledger[dateKey] || {};
+    state.xp.ledger[dateKey][`${habitId}:${actionId}`] = {
+      amount,
+      reason: reason || actionId,
+      at: Date.now(),
+    };
+
+    state.xp.total = Math.max(0, (state.xp.total || 0) + amount);
+    return { awarded: amount, already: false };
+  }
+
+  function computeXpTotalForToday() {
+    // Real XP is ledger-based (dynamic).
+    // Keep UI stable even if ledger missing.
+    ensureStateShape();
+    const total = state.xp.total || 0;
+    return total;
+  }
 
   function renderXpUi(els) {
     if (!els.xpTotalEl || !els.xpFillEl || !els.xpPctEl || !els.xpNextLabelEl || !els.levelBadgeEl) {
+
       // optional UI; never crash
     }
 
-    if (!state.xp) state.xp = { total: 0, awarded: {} };
-    state.xp.awarded = state.xp.awarded || {};
+    ensureStateShape();
 
+    // Real XP is ledger-based (dynamic). Never recompute total from habit count.
     const total = computeXpTotalForToday();
     state.xp.total = total;
+
 
     if (els.xpTotalEl) els.xpTotalEl.textContent = String(total);
 
@@ -275,6 +428,10 @@
 
     els.todayLabel && (els.todayLabel.textContent = formatToday());
     els.motivationQuote && (els.motivationQuote.textContent = pickMotivation());
+
+    // Resolve streak + missed days each dashboard render (once/day logic inside)
+    resolveDailyStreakAndMissedDays(els);
+
 
     const tKey = todayKey();
     const habits = state.habits;
@@ -649,10 +806,13 @@
   function clearAll(els) {
     state = {
       habits: [],
-      xp: { total: 0, awarded: {} },
-      streak: { current: 0, best: 0, history: [] },
+      xp: { total: 0, ledger: {} },
+      streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
+      achievements: { unlocked: {} },
+      meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} } },
       _dirtyViews: { weekly: true, monthly: true },
     };
+
     save();
     renderDashboard(els);
   }

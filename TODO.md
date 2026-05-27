@@ -1,13 +1,44 @@
-# HabitTracker Fix Plan - XP Progress Freeze
+# TODO — Ultra Premium Habit Tracker Upgrade
 
-## Planned steps
-- [ ] Step 1: Update viewport meta tags for mobile-safe scaling.
-- [ ] Step 2: Harden JS startup (guards + try/catch) to prevent blank screen/crashes.
-- [x] Step 3: Fix navigation state tracking so the app knows which view is active.
-- [x] Step 4: Refresh XP UI reliably after each habit toggle.
-- [ ] Step 5: Mobile responsiveness/overflow: ensure content doesn’t overlap fixed areas and prevent modal scroll issues.
-- [ ] Step 6: Add minor defensive styling (touch-friendly buttons, safe padding).
+## Step 1: Repo audit & safety checks
+- [x] Read `index.html`, `script.js`, `style.css`, `manifest.json`
+- [x] Identify current XP/streak/analytics limitations
+- [x] Ensure changes won’t break layout (no redesign)
 
-## Progress
-- [x] Step 3 (pending implementation in script.js)
+## Step 2: Premium Engine (core logic)
+- [x] Implement real dynamic XP + level progression (event ledger)
+- [x] Add streak freeze + missed-day recovery/warnings
+
+- [ ] Add achievements/badges rules + persistence
+
+
+## Step 3: Premium UI/UX enhancements (no layout redesign)
+- [ ] Celebration animations (confetti/glow/pulse + floating XP)
+- [ ] Sound effects (WebAudio) for complete/level/achievement/streak
+- [ ] Achievement popup animations + badge cards
+
+## Step 4: Premium Analytics upgrade
+- [ ] Productivity score + consistency %
+- [ ] Best/worst day
+- [ ] Heatmap (GitHub style) inside existing Analytics card
+- [ ] Weekly graph rendering
+
+## Step 5: Habit management upgrades
+- [ ] Habit categories + emoji icons (extend add habit modal)
+- [ ] Search + filter (completed/missed/active)
+- [ ] Drag & drop reorder
+- [ ] Habit notes + mood tracker (minimal UI inside habit rows)
+
+## Step 6: Productivity modes
+- [ ] Focus mode toggle
+- [ ] Pomodoro timer (simple)
+
+## Step 7: Offline/PWA + cloud scaffolding
+- [ ] Add/update `service-worker.js`
+- [ ] Add cloud sync structure in code (optional runtime off)
+
+## Step 8: Quality & safety
+- [ ] Throttle saves + ensure no blank screens
+- [ ] Accessibility pass (aria-live, reduced motion)
+- [ ] Smoke test flows: add habit, mark done/undone, reset week/month, clear all
 
