@@ -331,16 +331,17 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 
 #view-monthly .monthly-grid th:not(:first-child),
 #view-monthly .monthly-grid td:not(:first-child){
-  min-width: 45px;
-  max-width: 45px;
+  min-width: 135px;
+  max-width: 135px;
   white-space: nowrap;
   text-align: center;
 }
 
 #view-monthly .monthly-grid td{
-  padding-left: 6px;
-  padding-right: 6px;
+  padding-left: 18px;
+  padding-right: 18px;
 }
+
 
 /* Mobile responsiveness */
 @media (max-width: 820px){
