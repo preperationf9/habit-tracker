@@ -738,15 +738,18 @@
   }
 
   function bindEvents(els) {
-    const navRoot = document.querySelector('aside.sidebar, header.topbar');
-    if (navRoot) {
-      navRoot.addEventListener('click', (e) => {
-        const btn = e.target && e.target.closest ? e.target.closest('.nav-item[data-view]') : null;
-        if (!btn) return;
-        e.preventDefault();
-        showView(btn.dataset.view, els);
+    // Robust navigation binding: bind directly to each nav button (desktop + mobile).
+    if (els.navItems && els.navItems.length) {
+      els.navItems.forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const view = btn.dataset.view;
+          if (!view) return;
+          showView(view, els);
+        });
       });
     }
+
 
     if (els.menuBtn && els.mobileNav) {
       els.menuBtn.addEventListener('click', () => {
