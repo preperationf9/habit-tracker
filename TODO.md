@@ -1,24 +1,29 @@
-# TODO — Ultra Premium Habit Tracker Upgrade (Cleanup Run)
+# TODO — Month tracking picker fix
 
-## Step 1: Premium removal scope confirmed
-- [x] User chose option 2: remove all premium feature code (keep UI)
+## Step 1: Add Month Picker UI
+- [ ] Update `index.html` monthly view header area to include:
+  - Month dropdown (`#monthSelect`)
+  - Prev/Next buttons (optional but planned)
 
-## Step 2: Identify premium code paths
-- [x] Located premium streak freeze/missed-day recovery + XP ledger scaffolding in script.js
-- [x] Found XP_PER_DONE undefined reference risk
+## Step 2: Persist selected month
+- [ ] Update `script.js` state/meta to store selected month (year + monthIndex)
+- [ ] Generate month options for last 24 months by default
 
-## Step 3: Implement simplified engine (no premium)
-- [ ] Replace dynamic XP ledger with stable static XP logic
-- [ ] Replace streak logic with basic consecutive streak (no freeze/missed recovery)
-- [ ] Remove achievements/quests/dailyQuests scaffolding
+## Step 3: Render monthly based on selected month
+- [ ] Update `renderMonthly()` to use selected month anchor instead of `new Date()`
 
-## Step 4: UI safety
-- [ ] Stop updating missed-warning UI (hide or ignore)
-- [ ] Ensure all buttons (add/delete/reset) work without crashes
+## Step 4: Reset month uses selected month
+- [ ] Update `clearMonth()` to clear history only for selected month
 
-## Step 5: Quick smoke test checklist
-- [ ] Add habit + mark done → XP increments
-- [ ] Toggle not done → XP adjusts safely
-- [ ] Streak increases across consecutive complete days
-- [ ] Reset week/month + clear all do not crash
+## Step 5: Wire events
+- [ ] Bind `monthSelect` change and Prev/Next click to update selected month and rerender
+
+## Step 6: Styling
+- [ ] Add minimal CSS for month picker alignment/spacing if needed
+
+## Step 7: Smoke test
+- [ ] Switch to Monthly view and select April/May/June
+- [ ] Verify correct day columns for selected month
+- [ ] Mark a habit for a day in selected month, confirm it appears
+- [ ] Click Reset month and confirm only that selected month clears
 

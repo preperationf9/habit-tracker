@@ -64,6 +64,60 @@
     return keys;
   }
 
+  function getSelectedMonthAnchor() {
+    ensureStateShape();
+    const sel = state.meta?.monthlySelected;
+    const now = new Date();
+    if (!sel || typeof sel.year !== 'number' || typeof sel.monthIndex !== 'number') {
+      return new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    return new Date(sel.year, sel.monthIndex, 1);
+  }
+
+  function setSelectedMonthByAnchor(anchor) {
+    ensureStateShape();
+    const a = anchor instanceof Date ? anchor : new Date(anchor);
+    state.meta.monthlySelected = { year: a.getFullYear(), monthIndex: a.getMonth() };
+    save();
+  }
+
+  function setSelectedMonth(year, monthIndex) {
+    setSelectedMonthByAnchor(new Date(year, monthIndex, 1));
+  }
+
+  function buildMonthOptions(selectEl, rangeMonthsBack = 24) {
+    if (!selectEl) return;
+
+    const now = new Date();
+    // last N months including current
+    const months = [];
+    for (let i = rangeMonthsBack - 1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(d);
+    }
+
+    selectEl.innerHTML = '';
+
+    for (const d of months) {
+      const opt = document.createElement('option');
+      const y = d.getFullYear();
+      const mi = d.getMonth();
+      opt.value = `${y}-${String(mi).padStart(2, '0')}`;
+      opt.textContent = d.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+      selectEl.appendChild(opt);
+    }
+
+    // select persisted month if inside range, else default to current month
+    const sel = state.meta?.monthlySelected;
+    let targetVal = null;
+    if (sel && typeof sel.year === 'number' && typeof sel.monthIndex === 'number') {
+      targetVal = `${sel.year}-${String(sel.monthIndex).padStart(2, '0')}`;
+    }
+    const has = targetVal && Array.from(selectEl.options).some((o) => o.value === targetVal);
+    selectEl.value = has ? targetVal : `${now.getFullYear()}-${String(now.getMonth()).padStart(2, '0')}`;
+    if (!has) setSelectedMonthByAnchor(new Date(now.getFullYear(), now.getMonth(), 1));
+  }
+
   function formatToday() {
     const d = new Date();
     return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
@@ -96,7 +150,11 @@
           xp: { total: 0, ledger: {} },
           streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
           achievements: { unlocked: {} },
-          meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} } },
+          meta: {
+            settings: { reducedMotion: false, sound: true },
+            dailyQuests: { dateKey: null, completed: {} },
+            monthlySelected: null,
+          },
           _dirtyViews: { weekly: true, monthly: true },
 
         };
@@ -108,6 +166,7 @@
           habits: parsed.habits,
           xp: parsed.xp || { total: 0, awarded: {} },
           streak: parsed.streak || { current: 0, best: 0, history: [] },
+          meta: parsed.meta || { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} }, monthlySelected: null },
           _dirtyViews: { weekly: true, monthly: true },
         };
       }
@@ -117,7 +176,11 @@
           xp: { total: 0, ledger: {} },
           streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
           achievements: { unlocked: {} },
-          meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} } },
+          meta: {
+            settings: { reducedMotion: false, sound: true },
+            dailyQuests: { dateKey: null, completed: {} },
+            monthlySelected: null,
+          },
           _dirtyViews: { weekly: true, monthly: true },
         };
 
@@ -234,7 +297,12 @@
     state.meta = state.meta || {
       settings: state.meta?.settings || { reducedMotion: false, sound: true },
       dailyQuests: state.meta?.dailyQuests || { dateKey: null, completed: {} },
+      monthlySelected: state.meta?.monthlySelected ?? null,
     };
+
+    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
+    state.meta.dailyQuests = state.meta.dailyQuests || { dateKey: null, completed: {} };
+    state.meta.monthlySelected = state.meta.monthlySelected || null;
 
     state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
   }
@@ -552,10 +620,11 @@
   function renderMonthly(els) {
     if (!els.monthlyTable || !els.monthRangePill) return;
 
-    const anchor = new Date();
+    const anchor = getSelectedMonthAnchor();
     const keys = monthKeys(anchor);
 
     els.monthRangePill.textContent = anchor.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+
 
     const habits = state.habits || [];
 
@@ -700,7 +769,7 @@
 
 
   function clearMonth(els) {
-    const keys = monthKeys();
+    const keys = monthKeys(getSelectedMonthAnchor());
     for (const habit of state.habits) {
       if (!habit.history) habit.history = {};
       for (const k of keys) delete habit.history[k];
@@ -738,6 +807,42 @@
   }
 
   function bindEvents(els) {
+    // Month picker events (Monthly view)
+    if (els.monthSelect) {
+      buildMonthOptions(els.monthSelect, 24);
+
+      // Sync selection with persisted state
+      els.monthSelect.value = els.monthSelect.value || (() => {
+        const a = getSelectedMonthAnchor();
+        return `${a.getFullYear()}-${String(a.getMonth()).padStart(2, '0')}`;
+      })();
+    }
+
+    els.monthSelect && els.monthSelect.addEventListener('change', () => {
+      const [y, mi] = (els.monthSelect.value || '').split('-').map((x) => Number(x));
+      if (!Number.isFinite(y) || !Number.isFinite(mi)) return;
+      setSelectedMonth(y, mi);
+      state._dirtyViews = state._dirtyViews || {};
+      state._dirtyViews.monthly = true;
+      renderMonthly(els);
+    });
+
+    const shiftMonth = (delta) => {
+      const a = getSelectedMonthAnchor();
+      const d = new Date(a.getFullYear(), a.getMonth() + delta, 1);
+      setSelectedMonthByAnchor(d);
+      if (els.monthSelect) {
+        els.monthSelect.value = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`;
+      }
+      state._dirtyViews = state._dirtyViews || {};
+      state._dirtyViews.monthly = true;
+      renderMonthly(els);
+    };
+
+    els.monthPrevBtn && els.monthPrevBtn.addEventListener('click', () => shiftMonth(-1));
+    els.monthNextBtn && els.monthNextBtn.addEventListener('click', () => shiftMonth(1));
+
+
     // Robust navigation binding: bind directly to each nav button (desktop + mobile).
     if (els.navItems && els.navItems.length) {
       els.navItems.forEach((btn) => {
@@ -879,6 +984,9 @@
       clearWeekBtn: $('clearWeekBtn'),
 
       monthRangePill: $('monthRangePill'),
+      monthSelect: $('monthSelect'),
+      monthPrevBtn: $('monthPrevBtn'),
+      monthNextBtn: $('monthNextBtn'),
       monthlyTable: $('monthlyTable'),
       clearMonthBtn: $('clearMonthBtn'),
 
