@@ -64,59 +64,7 @@
     return keys;
   }
 
-  function getSelectedMonthAnchor() {
-    ensureStateShape();
-    const sel = state.meta?.monthlySelected;
-    const now = new Date();
-    if (!sel || typeof sel.year !== 'number' || typeof sel.monthIndex !== 'number') {
-      return new Date(now.getFullYear(), now.getMonth(), 1);
-    }
-    return new Date(sel.year, sel.monthIndex, 1);
-  }
 
-  function setSelectedMonthByAnchor(anchor) {
-    ensureStateShape();
-    const a = anchor instanceof Date ? anchor : new Date(anchor);
-    state.meta.monthlySelected = { year: a.getFullYear(), monthIndex: a.getMonth() };
-    save();
-  }
-
-  function setSelectedMonth(year, monthIndex) {
-    setSelectedMonthByAnchor(new Date(year, monthIndex, 1));
-  }
-
-  function buildMonthOptions(selectEl, rangeMonthsBack = 24) {
-    if (!selectEl) return;
-
-    const now = new Date();
-    // last N months including current
-    const months = [];
-    for (let i = rangeMonthsBack - 1; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      months.push(d);
-    }
-
-    selectEl.innerHTML = '';
-
-    for (const d of months) {
-      const opt = document.createElement('option');
-      const y = d.getFullYear();
-      const mi = d.getMonth();
-      opt.value = `${y}-${String(mi).padStart(2, '0')}`;
-      opt.textContent = d.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
-      selectEl.appendChild(opt);
-    }
-
-    // select persisted month if inside range, else default to current month
-    const sel = state.meta?.monthlySelected;
-    let targetVal = null;
-    if (sel && typeof sel.year === 'number' && typeof sel.monthIndex === 'number') {
-      targetVal = `${sel.year}-${String(sel.monthIndex).padStart(2, '0')}`;
-    }
-    const has = targetVal && Array.from(selectEl.options).some((o) => o.value === targetVal);
-    selectEl.value = has ? targetVal : `${now.getFullYear()}-${String(now.getMonth()).padStart(2, '0')}`;
-    if (!has) setSelectedMonthByAnchor(new Date(now.getFullYear(), now.getMonth(), 1));
-  }
 
   function formatToday() {
     const d = new Date();
@@ -636,10 +584,11 @@
   function renderMonthly(els) {
     if (!els.monthlyTable || !els.monthRangePill) return;
 
-    const anchor = getSelectedMonthAnchor();
+    const anchor = new Date();
     const keys = monthKeys(anchor);
 
     els.monthRangePill.textContent = anchor.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
+
 
 
     const habits = state.habits || [];
