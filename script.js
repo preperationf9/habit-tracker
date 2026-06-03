@@ -298,11 +298,13 @@
       settings: state.meta?.settings || { reducedMotion: false, sound: true },
       dailyQuests: state.meta?.dailyQuests || { dateKey: null, completed: {} },
       monthlySelected: state.meta?.monthlySelected ?? null,
+      habitTrash: state.meta?.habitTrash || [],
     };
 
     state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
     state.meta.dailyQuests = state.meta.dailyQuests || { dateKey: null, completed: {} };
     state.meta.monthlySelected = state.meta.monthlySelected || null;
+    state.meta.habitTrash = state.meta.habitTrash || [];
 
     state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
   }
@@ -915,11 +917,56 @@
 
         if (action === 'deleteHabit') {
           const habit = state.habits.find((h) => h.id === habitId);
-          const ok = confirm(`Delete habit: ${habit?.name ?? ''}?`);
-          if (!ok) return;
+          if (!habit) return;
+
+          // Two-step deletion UX:
+          // 1) User must explicitly choose confirm to permanently delete.
+          // 2) Support Undo (restore) after deletion.
+          const permanent = confirm(
+            `Permanently delete this habit?\n\n${habit.name}\n\nOK = permanent delete, Cancel = keep (no delete).`
+          );
+          if (!permanent) return;
+
+          // Create undo snapshot before deletion
+          ensureStateShape();
+          state.meta = state.meta || {};
+          state.meta.habitTrash = state.meta.habitTrash || [];
+          state.meta.habitTrash.unshift({
+            habit: structuredClone ? structuredClone(habit) : JSON.parse(JSON.stringify(habit)),
+            deletedAt: Date.now(),
+          });
+
           deleteHabitById(habitId);
           renderDashboard(els);
           scheduleRender(els, els.currentView || 'dashboard');
+
+          // Undo (restore) right after deletion (simple confirm-based UX)
+          // If user clicks Cancel on the undo prompt, habit remains permanently deleted.
+          const undo = confirm(`Habit deleted. Do you want to restore it?\n\n${habit.name}`);
+          if (undo) {
+            ensureStateShape();
+            state.meta.habitTrash = state.meta.habitTrash || [];
+            const idx = state.meta.habitTrash.findIndex((t) => t.habit?.id === habitId);
+            if (idx !== -1) {
+              const snapshot = state.meta.habitTrash[idx]?.habit;
+              // Remove from trash first to avoid duplicates
+              state.meta.habitTrash.splice(idx, 1);
+
+              // Restore to top
+              if (snapshot && !state.habits.some((h) => h.id === habitId)) {
+                state.habits.unshift(snapshot);
+              }
+
+              save();
+              state._dirtyViews = state._dirtyViews || {};
+              state._dirtyViews.weekly = true;
+              state._dirtyViews.monthly = true;
+              renderDashboard(els);
+              if (els.currentView === 'monthly') renderMonthly(els);
+              if (els.currentView === 'weekly') renderWeekly(els);
+            }
+          }
+
           return;
         }
 
