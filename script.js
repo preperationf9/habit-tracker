@@ -154,36 +154,50 @@
             settings: { reducedMotion: false, sound: true },
             dailyQuests: { dateKey: null, completed: {} },
             monthlySelected: null,
+            habitTrash: [],
           },
           _dirtyViews: { weekly: true, monthly: true },
-
         };
         return;
       }
+
       const parsed = JSON.parse(raw);
       if (isValidLoadedState(parsed)) {
         state = {
           habits: parsed.habits,
-          xp: parsed.xp || { total: 0, awarded: {} },
-          streak: parsed.streak || { current: 0, best: 0, history: [] },
-          meta: parsed.meta || { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} }, monthlySelected: null },
-          _dirtyViews: { weekly: true, monthly: true },
-        };
-      }
-    } catch {
-        state = {
-          habits: [],
-          xp: { total: 0, ledger: {} },
-          streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
-          achievements: { unlocked: {} },
-          meta: {
+          xp: parsed.xp || { total: 0, ledger: {} },
+          streak: parsed.streak || { current: 0, best: 0, lastResolvedKey: null },
+          achievements: parsed.achievements || { unlocked: {} },
+          meta: parsed.meta || {
             settings: { reducedMotion: false, sound: true },
             dailyQuests: { dateKey: null, completed: {} },
             monthlySelected: null,
+            habitTrash: [],
           },
           _dirtyViews: { weekly: true, monthly: true },
         };
 
+        // Ensure newly added meta keys exist (prevents render break + refresh loss)
+        state.meta = state.meta || {};
+        state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
+        state.meta.dailyQuests = state.meta.dailyQuests || { dateKey: null, completed: {} };
+        state.meta.monthlySelected = state.meta.monthlySelected ?? null;
+        state.meta.habitTrash = state.meta.habitTrash || [];
+      }
+    } catch {
+      state = {
+        habits: [],
+        xp: { total: 0, ledger: {} },
+        streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
+        achievements: { unlocked: {} },
+        meta: {
+          settings: { reducedMotion: false, sound: true },
+          dailyQuests: { dateKey: null, completed: {} },
+          monthlySelected: null,
+          habitTrash: [],
+        },
+        _dirtyViews: { weekly: true, monthly: true },
+      };
     }
   }
 
