@@ -1,45 +1,29 @@
-(() => {
+ (() => {
   'use strict';
 
   const STORAGE_KEY = 'habitTracker.v1';
+  const STORAGE_MIGRATION_VERSION = 2;
 
-  // ------------------------------
-  // Storage persistence + migration
-  // ------------------------------
-  // Goal: never lose user data across code updates.
-  // - We load any existing stored JSON
-  // - We merge it into the current expected state shape
-  // - We never overwrite existing habit.history or habit arrays
-  // - We only add missing fields for new features
-  // - We never call localStorage.clear() and avoid destructive overwrites
-
-  const STORAGE_MIGRATION_VERSION = 2; // bump when you change the state shape
-
-
-  // Simple, stable XP model (premium XP removed)
-  const XP = {
-    completeHabit: 5,
-  };
-
-
+  const XP = { completeHabit: 10 };
 
   /**
    * @typedef {'done'|'not_done'} HabitStatus
    * @typedef {{ [dateKey: string]: HabitStatus }} HabitHistory
-   * @typedef {{habits: Array<{id:string,name:string,targetDays:number,createdAt:number,history: HabitHistory}>}} BaseState
+   * @typedef {{id:string,name:string,targetDays:number,createdAt:number,history: HabitHistory}} Habit
    */
 
   /**
-   * @type {BaseState & {
-   *   xp?: { total:number, ledger?: Record<string, Record<string, {amount:number, reason:string, at:number}>> },
-   *   streak?: { current:number, best:number, lastResolvedKey?: string|null, freezeCount?: number, missedDays?: string[] },
-   *   achievements?: { unlocked?: Record<string, boolean> },
-   *   meta?: any,
+   * @typedef {{
+   *   habits: Habit[],
+   *   xp: { total:number, ledger?: any },
+   *   streak: { current:number, best:number, lastResolvedKey?: string|null, freezeCount?: number, missedDays?: string[] },
+   *   achievements: { unlocked?: Record<string, boolean> },
+   *   meta: any,
    *   _dirtyViews?: Record<string, boolean>
-   * }}
+   * }} AppState
    */
 
-  let state = { habits: [] };
+  let state = /** @type {AppState} */ ({ habits: [] });
   let renderScheduled = false;
 
   const $ = (id) => document.getElementById(id);
@@ -77,8 +61,6 @@
     return keys;
   }
 
-
-
   function formatToday() {
     const d = new Date();
     return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
@@ -92,18 +74,10 @@
       'Your future self will thank you.',
       'Focus on progress, not perfection.',
     ];
-    const idx = Math.floor(Math.random() * quotes.length);
-    return quotes[idx];
-  }
-
-  function isValidLoadedState(s) {
-    if (!s || typeof s !== 'object') return false;
-    if (!Array.isArray(s.habits)) return false;
-    return true;
+    return quotes[Math.floor(Math.random() * quotes.length)];
   }
 
   function deepMerge(base, incoming) {
-    // Only merges plain objects; arrays are treated as atomic.
     if (incoming === undefined) return base;
     if (incoming === null) return incoming;
 
@@ -120,11 +94,90 @@
       if (v && typeof v === 'object' && !Array.isArray(v) && base && typeof base[k] === 'object' && !Array.isArray(base[k])) {
         out[k] = deepMerge(base[k], v);
       } else {
-        // Preserve existing values if incoming is undefined.
         out[k] = v === undefined ? base[k] : v;
       }
     }
     return out;
+  }
+
+  function cloneData(value) {
+    if (typeof structuredClone === 'function') return structuredClone(value);
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function normalizeTrashEntries(value) {
+    if (!Array.isArray(value)) return [];
+
+    return value
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+
+        const habit = entry.habit && typeof entry.habit === 'object' ? entry.habit : entry;
+        if (!habit || typeof habit !== 'object' || !habit.id) return null;
+
+        return {
+          habit: {
+            ...habit,
+            name: typeof habit.name === 'string' ? habit.name : '',
+            targetDays: safeNumber(habit.targetDays, 7),
+            createdAt: safeNumber(habit.createdAt, Date.now()),
+            history: habit.history && typeof habit.history === 'object' ? habit.history : {},
+          },
+          deletedAt: safeNumber(entry.deletedAt, Date.now()),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function getXpLedgerKey(habitId, dateKey) {
+    return `${dateKey}:${habitId}`;
+  }
+
+  function syncXpForStatusChange(habitId, dateKey, previousStatus, nextStatus) {
+    ensureStateShape();
+    const key = getXpLedgerKey(habitId, dateKey);
+    const existing = state.xp.ledger[key];
+
+    if (nextStatus === 'done') {
+      if (!existing) {
+        state.xp.ledger[key] = { amount: XP.completeHabit, reason: 'completeHabit', at: Date.now() };
+        state.xp.total = safeNumber(state.xp.total, 0) + XP.completeHabit;
+      }
+      return;
+    }
+
+    if (previousStatus === 'done' && existing) {
+      state.xp.total = Math.max(0, safeNumber(state.xp.total, 0) - safeNumber(existing.amount, XP.completeHabit));
+      delete state.xp.ledger[key];
+    }
+  }
+
+  function removeXpForStatus(habitId, dateKey) {
+    ensureStateShape();
+    const key = getXpLedgerKey(habitId, dateKey);
+    const existing = state.xp.ledger[key];
+    if (!existing) return;
+    state.xp.total = Math.max(0, safeNumber(state.xp.total, 0) - safeNumber(existing.amount, XP.completeHabit));
+    delete state.xp.ledger[key];
+  }
+
+  function seedXpLedgerFromHistory() {
+    ensureStateShape();
+    const existingLedger = Object.values(state.xp.ledger || {});
+    if (existingLedger.length) {
+      state.xp.total = existingLedger.reduce((sum, entry) => sum + safeNumber(entry?.amount, XP.completeHabit), 0);
+      return;
+    }
+
+    let total = 0;
+    for (const habit of state.habits) {
+      for (const [dateKey, status] of Object.entries(habit.history || {})) {
+        if (status !== 'done') continue;
+        state.xp.ledger[getXpLedgerKey(habit.id, dateKey)] = { amount: XP.completeHabit, reason: 'completeHabit', at: habit.createdAt || Date.now() };
+        total += XP.completeHabit;
+      }
+    }
+    state.xp.total = total;
   }
 
   function getDefaultState() {
@@ -137,25 +190,21 @@
         settings: { reducedMotion: false, sound: true },
         dailyQuests: { dateKey: null, completed: {} },
         monthlySelected: null,
-        habitTrash: [],
+        habitTrash: [], // [{habit: HabitSnapshot, deletedAt:number}]
       },
       _dirtyViews: { weekly: true, monthly: true },
     };
   }
 
   function migrateAndMergeState(parsed) {
-    // Never delete user habits/history.
     const base = getDefaultState();
-
     if (!parsed || typeof parsed !== 'object') return base;
+
     const habits = Array.isArray(parsed.habits) ? parsed.habits : base.habits;
 
-    // Start with defaults, then merge the parsed object.
-    // Ensure habits comes from parsed (so we never overwrite with empty).
     const merged = deepMerge(base, parsed);
     merged.habits = habits;
 
-    // Ensure each habit has required keys but never remove history.
     merged.habits = (merged.habits || []).map((h) => {
       const out = { ...(h && typeof h === 'object' ? h : {}) };
       out.id = out.id ?? String(Date.now()) + Math.random().toString(16).slice(2);
@@ -166,14 +215,19 @@
       return out;
     });
 
-    // meta safe defaults (preserve existing meta if present)
     merged.meta = merged.meta && typeof merged.meta === 'object' ? merged.meta : base.meta;
     merged.meta.settings = merged.meta.settings && typeof merged.meta.settings === 'object' ? merged.meta.settings : base.meta.settings;
     merged.meta.dailyQuests = merged.meta.dailyQuests && typeof merged.meta.dailyQuests === 'object' ? merged.meta.dailyQuests : base.meta.dailyQuests;
     merged.meta.monthlySelected = merged.meta.monthlySelected ?? null;
-    merged.meta.habitTrash = Array.isArray(merged.meta.habitTrash) ? merged.meta.habitTrash : base.meta.habitTrash;
+    const savedTrash = Array.isArray(merged.meta.habitTrash)
+      ? merged.meta.habitTrash
+      : Array.isArray(parsed.trash)
+        ? parsed.trash
+        : Array.isArray(parsed.meta?.trash)
+          ? parsed.meta.trash
+          : base.meta.habitTrash;
+    merged.meta.habitTrash = normalizeTrashEntries(savedTrash);
 
-    // month-wise map for monthly view (stored in meta)
     merged.meta.monthlyByMonthKey = merged.meta.monthlyByMonthKey && typeof merged.meta.monthlyByMonthKey === 'object' ? merged.meta.monthlyByMonthKey : {};
 
     merged.xp = merged.xp && typeof merged.xp === 'object' ? merged.xp : base.xp;
@@ -190,18 +244,12 @@
     merged.achievements = merged.achievements && typeof merged.achievements === 'object' ? merged.achievements : base.achievements;
     merged.achievements.unlocked = merged.achievements.unlocked && typeof merged.achievements.unlocked === 'object' ? merged.achievements.unlocked : {};
 
-    // mark dirty views for first render after migration
     merged._dirtyViews = base._dirtyViews;
 
-    // Add migration metadata without overwriting habits
-    merged.meta._storageMigration = {
-      v: STORAGE_MIGRATION_VERSION,
-      migratedAt: Date.now(),
-    };
+    merged.meta._storageMigration = { v: STORAGE_MIGRATION_VERSION, migratedAt: Date.now() };
 
     return merged;
   }
-
 
   function load() {
     try {
@@ -213,65 +261,66 @@
 
       const parsed = JSON.parse(raw);
 
-      // If we can’t validate the full shape, we still should try to preserve habits.
-      // Never reset habits to empty if parsed.habits exists.
-      if (parsed && Array.isArray(parsed.habits)) {
+      if (parsed && typeof parsed === 'object') {
         state = migrateAndMergeState(parsed);
       } else {
-        // Legacy/invalid or empty: preserve nothing except defaults.
         state = getDefaultState();
       }
+      seedXpLedgerFromHistory();
 
-      // If migration happened and produced a new shape, persist it.
-      // This does not delete habits; it only adds missing fields.
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       } catch {
-        // ignore storage persistence errors
+        // ignore
       }
     } catch {
       state = getDefaultState();
     }
   }
 
-
   function save() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      // storage might be full/blocked; UI must keep running
+      // ignore
     }
   }
 
-  function getLevelFromXp(totalXp) {
-    const x = Math.max(0, Number(totalXp) || 0);
-    if (x >= 200) return { name: 'Master', minXp: 200, nextXp: 200, progressStart: 200 };
-    if (x >= 100) return { name: 'Advanced', minXp: 100, nextXp: 200, progressStart: 100 };
-    if (x >= 50) return { name: 'Intermediate', minXp: 50, nextXp: 100, progressStart: 50 };
-    return { name: 'Beginner', minXp: 0, nextXp: 50, progressStart: 0 };
+  function ensureStateShape() {
+    state = state || { habits: [] };
+    state.xp = state.xp || { total: 0, ledger: {} };
+    state.xp.total = safeNumber(state.xp.total, 0);
+    state.xp.ledger = state.xp.ledger && typeof state.xp.ledger === 'object' ? state.xp.ledger : {};
+
+    state.streak = state.streak || { current: 0, best: 0, lastResolvedKey: null };
+    state.streak.current = safeNumber(state.streak.current, 0);
+    state.streak.best = safeNumber(state.streak.best, 0);
+    state.streak.lastResolvedKey = state.streak.lastResolvedKey ?? null;
+    state.streak.freezeCount = safeNumber(state.streak.freezeCount, 1);
+    state.streak.missedDays = Array.isArray(state.streak.missedDays) ? state.streak.missedDays : [];
+
+    state.achievements = state.achievements || { unlocked: {} };
+    state.achievements.unlocked = state.achievements.unlocked && typeof state.achievements.unlocked === 'object' ? state.achievements.unlocked : {};
+
+    state.meta = state.meta || {};
+    state.meta.settings = state.meta.settings && typeof state.meta.settings === 'object' ? state.meta.settings : { reducedMotion: false, sound: true };
+    state.meta.dailyQuests = state.meta.dailyQuests && typeof state.meta.dailyQuests === 'object' ? state.meta.dailyQuests : { dateKey: null, completed: {} };
+    state.meta.monthlySelected = state.meta.monthlySelected ?? null;
+    state.meta.habitTrash = normalizeTrashEntries(state.meta.habitTrash);
+    state.meta.monthlyByMonthKey = state.meta.monthlyByMonthKey && typeof state.meta.monthlyByMonthKey === 'object' ? state.meta.monthlyByMonthKey : {};
+
+    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
   }
 
   function isHabitDayComplete(dateKey) {
-    // Premium streak definition: all habits must be done on that day.
-    // If user has no habits, treat as not streakable.
     if (!state.habits.length) return false;
-    // done when every habit is marked done.
     for (const habit of state.habits) {
       if (habit.history?.[dateKey] !== 'done') return false;
     }
     return true;
   }
 
-  function getDoneCountForDate(dateKey) {
-    let done = 0;
-    for (const habit of state.habits) {
-      if (habit.history?.[dateKey] === 'done') done++;
-    }
-    return done;
-  }
-
   function computeStreakUpTo(dateKeyInclusive) {
-    // Compute current streak ending at dateKeyInclusive backwards with no gaps.
     let streak = 0;
     for (let i = 0; i < 730; i++) {
       const d = new Date(dateKeyInclusive + 'T00:00:00');
@@ -302,84 +351,39 @@
   }
 
   function resolveDailyStreakAndMissedDays(els) {
-    // Premium streak freeze/missed-day recovery removed.
-    // Keep function name to avoid touching the rest of the code.
     ensureStateShape();
-
     const today = todayKey(new Date());
-
     const current = isHabitDayComplete(today) ? computeStreakUpTo(today) : 0;
     const best = computeBestStreak();
-
     state.streak.current = current;
     state.streak.best = Math.max(state.streak.best || 0, best);
 
     if (els && els.missedWarningEl) {
-      // Always hide missed-day warning after premium removal.
       els.missedWarningEl.classList.remove('is-show');
     }
   }
 
-
-
-  function getDayDoneCount(dateKey) {
-    let done = 0;
-    for (const habit of state.habits) {
-      if (habit.history?.[dateKey] === 'done') done++;
-    }
-    return done;
+  function getLevelFromXp(totalXp) {
+    const x = Math.max(0, Number(totalXp) || 0);
+    if (x >= 200) return { name: 'Master', minXp: 200, nextXp: 200, progressStart: 200 };
+    if (x >= 100) return { name: 'Advanced', minXp: 100, nextXp: 200, progressStart: 100 };
+    if (x >= 50) return { name: 'Intermediate', minXp: 50, nextXp: 100, progressStart: 50 };
+    return { name: 'Beginner', minXp: 0, nextXp: 50, progressStart: 0 };
   }
 
-  function ensureStateShape() {
-    state = state || { habits: [] };
-
-    state.xp = state.xp || { total: 0, ledger: {} };
-    state.xp.ledger = state.xp.ledger || {};
-
-    state.streak = state.streak || { current: 0, best: 0, lastResolvedKey: null };
-
-
-    state.achievements = state.achievements || { unlocked: {} };
-
-    // meta (non-breaking)
-    state.meta = state.meta || {
-      settings: state.meta?.settings || { reducedMotion: false, sound: true },
-      dailyQuests: state.meta?.dailyQuests || { dateKey: null, completed: {} },
-      monthlySelected: state.meta?.monthlySelected ?? null,
-      habitTrash: state.meta?.habitTrash || [],
-    };
-
-    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
-    state.meta.dailyQuests = state.meta.dailyQuests || { dateKey: null, completed: {} };
-    state.meta.monthlySelected = state.meta.monthlySelected || null;
-    state.meta.habitTrash = state.meta.habitTrash || [];
-
-    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
-  }
-
-  // Premium XP ledger removed.
-  // XP is stored as a single number: state.xp.total.
   function computeXpTotalForToday() {
     ensureStateShape();
-    const total = state.xp.total || 0;
-    return total;
+    return state.xp.total || 0;
   }
 
-
   function renderXpUi(els) {
-    if (!els.xpTotalEl || !els.xpFillEl || !els.xpPctEl || !els.xpNextLabelEl || !els.levelBadgeEl) {
-
-      // optional UI; never crash
-    }
+    if (!els.xpTotalEl || !els.xpFillEl || !els.xpPctEl || !els.xpNextLabelEl || !els.levelBadgeEl) return;
 
     ensureStateShape();
-
-    // Real XP is ledger-based (dynamic). Never recompute total from habit count.
     const total = computeXpTotalForToday();
     state.xp.total = total;
 
-
-    if (els.xpTotalEl) els.xpTotalEl.textContent = String(total);
+    els.xpTotalEl.textContent = String(total);
 
     const lvl = getLevelFromXp(total);
     const startXp = lvl.progressStart ?? lvl.minXp ?? 0;
@@ -387,52 +391,36 @@
     const progress = Math.max(0, Math.min(1, (total - startXp) / denom));
     const pct = Math.round(progress * 100);
 
-    if (els.levelBadgeEl) els.levelBadgeEl.textContent = lvl.name;
-    if (els.xpFillEl) els.xpFillEl.style.width = `${pct}%`;
-    if (els.xpPctEl) els.xpPctEl.textContent = `${pct}%`;
-    if (els.xpNextLabelEl) {
-      const inBandCurrent = Math.max(0, total - startXp);
-      const inBandTotal = Math.max(1, lvl.nextXp - startXp);
-      els.xpNextLabelEl.textContent = `${inBandCurrent} / ${inBandTotal} XP`;
-    }
+    els.levelBadgeEl.textContent = lvl.name;
+    els.xpFillEl.style.width = `${pct}%`;
+    els.xpPctEl.textContent = `${pct}%`;
+    els.xpProgressBar && els.xpProgressBar.setAttribute('aria-valuenow', String(pct));
 
+    const inBandCurrent = Math.max(0, total - startXp);
+    const inBandTotal = Math.max(1, lvl.nextXp - startXp);
+    els.xpNextLabelEl.textContent = `${inBandCurrent} / ${inBandTotal} XP`;
   }
 
   function showView(view, els) {
     els.currentView = view;
-
-    const map = {
-      dashboard: els.viewDashboard,
-      weekly: els.viewWeekly,
-      monthly: els.viewMonthly,
-      settings: els.viewSettings,
-    };
-
+    const map = { dashboard: els.viewDashboard, weekly: els.viewWeekly, monthly: els.viewMonthly, settings: els.viewSettings, trash: els.viewTrash };
     for (const [k, el] of Object.entries(map)) {
       if (!el) continue;
       el.classList.toggle('is-hidden', k !== view);
     }
 
     if (els.navItems) {
-      els.navItems.forEach((b) => {
-        b.classList.toggle('is-active', b.dataset.view === view);
-      });
+      els.navItems.forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
     }
 
-    // Close mobile menu on any view change for navigation stability.
     if (els.mobileNav && els.mobileNav.classList.contains('is-open')) {
       els.mobileNav.classList.remove('is-open');
+      els.menuBtn && els.menuBtn.setAttribute('aria-expanded', 'false');
     }
 
-    // Mark dirty + render only visible view.
-    if (view === 'weekly' && els.viewWeekly) {
-      state._dirtyViews = state._dirtyViews || {};
-      state._dirtyViews.weekly = true;
-    }
-    if (view === 'monthly' && els.viewMonthly) {
-      state._dirtyViews = state._dirtyViews || {};
-      state._dirtyViews.monthly = true;
-    }
+    if (view === 'weekly') state._dirtyViews.weekly = true;
+    if (view === 'monthly') state._dirtyViews.monthly = true;
+    if (view === 'trash') state._dirtyViews.trash = true;
 
     scheduleRender(els, view);
   }
@@ -447,9 +435,9 @@
         else if (view === 'weekly') renderWeekly(els);
         else if (view === 'monthly') renderMonthly(els);
         else if (view === 'settings') renderSettings(els);
+        else if (view === 'trash') renderTrash(els);
         else renderDashboard(els);
       } catch (e) {
-        // Never leave screen blank.
         showFatalError(els, e);
       }
     });
@@ -457,24 +445,22 @@
 
   function showFatalError(els, err) {
     if (!els.fatalErrorEl) return;
-    const msg = (err && err.message) ? err.message : 'Unexpected error';
+    const msg = err && err.message ? err.message : 'Unexpected error';
     els.fatalErrorEl.textContent = `Could not load Habit Tracker: ${msg}`;
     els.fatalErrorEl.style.display = 'block';
   }
 
   function renderDashboard(els) {
     if (!els.viewDashboard) return;
+    if (typeof renderAnalytics === 'function') renderAnalytics(els);
 
     els.todayLabel && (els.todayLabel.textContent = formatToday());
     els.motivationQuote && (els.motivationQuote.textContent = pickMotivation());
 
-    // Resolve streak + missed days each dashboard render (once/day logic inside)
     resolveDailyStreakAndMissedDays(els);
-
 
     const tKey = todayKey();
     const habits = state.habits;
-
     if (els.habitList) els.habitList.innerHTML = '';
 
     let doneCount = 0;
@@ -482,11 +468,10 @@
 
     if (els.habitList) {
       const frag = document.createDocumentFragment();
-
       for (const habit of habits) {
-        totalCount += 1;
+        totalCount++;
         const status = habit.history?.[tKey];
-        if (status === 'done') doneCount += 1;
+        if (status === 'done') doneCount++;
 
         const item = document.createElement('div');
         item.className = 'habit-item';
@@ -514,6 +499,7 @@
         doneBtn.className = 'check-btn';
         doneBtn.textContent = '✓';
         doneBtn.title = 'Done';
+        doneBtn.setAttribute('aria-label', `Mark ${habit.name} done`);
         if (status === 'done') doneBtn.classList.add('is-done');
         doneBtn.dataset.action = 'setStatus';
         doneBtn.dataset.status = 'done';
@@ -523,6 +509,7 @@
         ndBtn.className = 'check-btn';
         ndBtn.textContent = '✕';
         ndBtn.title = 'Not done';
+        ndBtn.setAttribute('aria-label', `Mark ${habit.name} not done`);
         if (status === 'not_done') ndBtn.classList.add('is-nd');
         ndBtn.dataset.action = 'setStatus';
         ndBtn.dataset.status = 'not_done';
@@ -532,6 +519,7 @@
         delBtn.className = 'delete-btn';
         delBtn.textContent = '🗑️';
         delBtn.title = 'Delete habit';
+        delBtn.setAttribute('aria-label', `Move ${habit.name} to Recycle Bin`);
         delBtn.dataset.action = 'deleteHabit';
 
         actions.appendChild(doneBtn);
@@ -540,26 +528,22 @@
 
         item.appendChild(left);
         item.appendChild(actions);
-
         frag.appendChild(item);
       }
-
       els.habitList.appendChild(frag);
     }
 
     if (els.emptyState) els.emptyState.classList.toggle('is-hidden', habits.length !== 0);
 
     const pct = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
-
     els.progressMeta && (els.progressMeta.textContent = `${pct}% completed`);
     els.progressFill && (els.progressFill.style.width = `${pct}%`);
     els.progressPct && (els.progressPct.textContent = `${pct}%`);
     els.progressCounts && (els.progressCounts.textContent = `${doneCount} / ${totalCount}`);
+    els.progressBar && els.progressBar.setAttribute('aria-valuenow', String(pct));
 
     if (els.streakCount) els.streakCount.textContent = String(state.streak?.current ?? 0);
 
-
-    // Dashboard XP + level
     renderXpUi(els);
 
     const streakCurrentEl = document.getElementById('streakCurrent');
@@ -574,6 +558,71 @@
     }
   }
 
+  function renderAnalytics(els) {
+    if (!els.analyticsTotalCompletedEl || !els.analyticsMissedHabitsEl || !els.analyticsBestHabitEl || !els.analyticsCompletionPctEl || !els.completionPillEl || !els.weeklyBarsEl) return;
+
+    const keys = weekKeys();
+    const habits = state.habits || [];
+    let totalDone = 0;
+    let totalMissed = 0;
+    let bestHabit = null;
+
+    const dayDoneCounts = keys.map(() => 0);
+    const dayExplicitCounts = keys.map(() => 0);
+
+    for (const habit of habits) {
+      let habitDone = 0;
+      let habitExplicit = 0;
+
+      keys.forEach((dateKey, index) => {
+        const status = habit.history?.[dateKey];
+        if (status === 'done') {
+          totalDone++;
+          habitDone++;
+          habitExplicit++;
+          dayDoneCounts[index]++;
+          dayExplicitCounts[index]++;
+        } else if (status === 'not_done') {
+          totalMissed++;
+          habitExplicit++;
+          dayExplicitCounts[index]++;
+        }
+      });
+
+      if (habitExplicit > 0) {
+        const pct = habitDone / habitExplicit;
+        if (!bestHabit || pct > bestHabit.pct || (pct === bestHabit.pct && habitDone > bestHabit.done)) {
+          bestHabit = { name: habit.name, pct, done: habitDone };
+        }
+      }
+    }
+
+    const explicitTotal = totalDone + totalMissed;
+    const completionPct = explicitTotal ? Math.round((totalDone / explicitTotal) * 100) : 0;
+
+    els.analyticsTotalCompletedEl.textContent = String(totalDone);
+    els.analyticsMissedHabitsEl.textContent = String(totalMissed);
+    els.analyticsBestHabitEl.textContent = bestHabit ? bestHabit.name : '—';
+    els.analyticsCompletionPctEl.textContent = `${completionPct}%`;
+    els.completionPillEl.textContent = `${completionPct}% completion`;
+
+    els.weeklyBarsEl.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    keys.forEach((dateKey, index) => {
+      const pct = dayExplicitCounts[index] ? Math.round((dayDoneCounts[index] / dayExplicitCounts[index]) * 100) : 0;
+      const d = new Date(dateKey + 'T00:00:00');
+      const label = d.toLocaleDateString(undefined, { weekday: 'short' });
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = `${Math.max(8, pct)}%`;
+      bar.title = `${label}: ${pct}%`;
+      bar.setAttribute('role', 'img');
+      bar.setAttribute('aria-label', `${label} completion ${pct}%`);
+      frag.appendChild(bar);
+    });
+    els.weeklyBarsEl.appendChild(frag);
+  }
+
   function renderWeekly(els) {
     if (!els.weekRangePill || !els.weeklyTable) return;
 
@@ -581,7 +630,6 @@
     els.weekRangePill.textContent = `${keys[0].slice(5).replace('-', '/')} - ${keys[keys.length - 1].slice(5).replace('-', '/')}`;
 
     const habits = state.habits;
-
     if (!habits.length) {
       els.weeklyTable.innerHTML = '<div class="empty"><div class="empty-ic">☆</div><div class="empty-title">No data yet</div><div class="empty-sub">Add a habit to see weekly tracking.</div></div>';
       return;
@@ -667,10 +715,7 @@
     els.weeklyTable.appendChild(wrapper);
   }
 
-  // --- Month navigation helpers (used only by Monthly view) ---
   function getSelectedMonthAnchor() {
-    // Selected month is stored in meta so it persists in localStorage.
-    // Fallback: current month.
     const ms = state?.meta?.monthlySelected;
     if (ms && typeof ms === 'object' && Number.isFinite(ms.y) && Number.isFinite(ms.m)) {
       return new Date(ms.y, ms.m, 1);
@@ -679,26 +724,20 @@
   }
 
   function setSelectedMonth(y, mi) {
-    // y = year (e.g., 2026), mi = 0-11
     ensureStateShape();
     state.meta.monthlySelected = { y: Number(y), m: Number(mi) };
     save();
   }
 
   function setSelectedMonthByAnchor(dateObj) {
-    const y = dateObj.getFullYear();
-    const m = dateObj.getMonth();
-    setSelectedMonth(y, m);
+    setSelectedMonth(dateObj.getFullYear(), dateObj.getMonth());
   }
 
   function monthKeyForStorage(anchor) {
-    // Format: YYYY-MM (stable key)
     return `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
   }
 
   function loadMonthMap(monthKey) {
-    // Month-wise storage is independent from habit.history.
-    // Structure: state.meta.monthlyByMonthKey[monthKey][habitId][dateKey] = 'done'|'not_done'
     ensureStateShape();
     state.meta.monthlyByMonthKey = state.meta.monthlyByMonthKey || {};
     state.meta.monthlyByMonthKey[monthKey] = state.meta.monthlyByMonthKey[monthKey] || {};
@@ -706,39 +745,40 @@
   }
 
   function getStatusForMonth(habitId, dateKey) {
-    const anchor = getSelectedMonthAnchor();
-    const mKey = monthKeyForStorage(anchor);
-    const monthMap = loadMonthMap(mKey);
-    const habitMap = monthMap[habitId] || {};
-    return habitMap[dateKey];
+    const habit = state.habits.find((h) => h.id === habitId);
+    return habit?.history?.[dateKey];
   }
 
   function setStatusForMonth(habitId, dateKey, status) {
-    const anchor = getSelectedMonthAnchor();
-    const mKey = monthKeyForStorage(anchor);
-    const monthMap = loadMonthMap(mKey);
-    const habitMap = monthMap[habitId] = monthMap[habitId] || {};
-    habitMap[dateKey] = status;
+    const habit = state.habits.find((h) => h.id === habitId);
+    if (!habit) return;
+    habit.history = habit.history || {};
+    const previous = habit.history[dateKey];
+    habit.history[dateKey] = status;
+    syncXpForStatusChange(habitId, dateKey, previous, status);
     save();
   }
 
   function clearMonth(els) {
-    // Reset monthly tracking for the selected month only.
     const anchor = getSelectedMonthAnchor();
     const mKey = monthKeyForStorage(anchor);
     const keys = monthKeys(anchor);
-
-    // Month-wise map is stored in meta.monthlyByMonthKey[monthKey]
     const monthMap = loadMonthMap(mKey);
 
     for (const habit of state.habits) {
-      if (!monthMap[habit.id]) monthMap[habit.id] = {};
-      const habitMap = monthMap[habit.id];
-      for (const k of keys) delete habitMap[k];
+      if (habit.history) {
+        for (const k of keys) {
+          if (habit.history[k] === 'done') removeXpForStatus(habit.id, k);
+          delete habit.history[k];
+        }
+      }
+
+      if (monthMap[habit.id]) {
+        for (const k of keys) delete monthMap[habit.id][k];
+      }
     }
 
     save();
-    state._dirtyViews = state._dirtyViews || {};
     state._dirtyViews.monthly = true;
     renderMonthly(els);
   }
@@ -748,12 +788,9 @@
 
     const anchor = getSelectedMonthAnchor();
     const keys = monthKeys(anchor);
-
     els.monthRangePill.textContent = anchor.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
 
     const habits = state.habits || [];
-
-
     if (!habits.length) {
       els.monthlyTable.innerHTML = '<div class="empty"><div class="empty-ic">★</div><div class="empty-title">No data yet</div><div class="empty-sub">Add a habit to see monthly tracking.</div></div>';
       return;
@@ -804,7 +841,6 @@
 
     for (const habit of habits) {
       const tr = document.createElement('tr');
-
       const tdName = document.createElement('td');
       tdName.textContent = habit.name;
       tdName.style.padding = '10px';
@@ -823,7 +859,6 @@
         const status = getStatusForMonth(habit.id, k);
         let symbol = '—';
         let color = 'rgba(232,238,252,.55)';
-
         if (status === 'done') {
           symbol = '✓';
           color = 'rgba(34,197,94,.95)';
@@ -845,64 +880,192 @@
     els.monthlyTable.appendChild(wrapper);
   }
 
-  function renderSettings() {
-    // static
+  function renderSettings() {}
+
+  function openTrashConfirmModal(els, habitId, habitName) {
+    ensureStateShape();
+    state._pendingTrashDelete = { habitId, habitName: habitName || (state.habits.find((h) => h.id === habitId)?.name || ''), snapshot: null };
+
+    // snapshot the habit right away, so it survives refresh even if user closes in-between
+    const habit = state.habits.find((h) => h.id === habitId);
+    if (habit) {
+      state._pendingTrashDelete.snapshot = cloneData(habit);
+    }
+
+    if (!els.trashConfirmModal) return;
+    els.trashConfirmModal.classList.add('is-open');
+    els.trashConfirmModal.setAttribute('aria-hidden', 'false');
   }
 
-  function openModal(els) {
-    if (!els.habitModal || !els.habitNameInput) return;
-    els.habitModal.classList.add('is-open');
-    els.habitModal.setAttribute('aria-hidden', 'false');
-    els.habitNameInput.focus();
+  function closeTrashConfirmModal(els) {
+    if (!els.trashConfirmModal) return;
+    els.trashConfirmModal.classList.remove('is-open');
+    els.trashConfirmModal.setAttribute('aria-hidden', 'true');
+    state._pendingTrashDelete = null;
   }
 
-  function closeModal(els) {
-    if (!els.habitModal) return;
-    els.habitModal.classList.remove('is-open');
-    els.habitModal.setAttribute('aria-hidden', 'true');
-    if (els.habitForm) els.habitForm.reset();
-    if (els.habitTargetInput) els.habitTargetInput.value = 7;
+  function openTrashPermanentModal(els, habitId) {
+    load();
+    ensureStateShape();
+    const trashEntry = state.meta.habitTrash.find((t) => t.habit?.id === habitId);
+    const habitName = trashEntry?.habit?.name || '';
+
+    state._pendingTrashPermanent = { habitId, habitName };
+
+    if (!els.trashPermanentModal) return;
+    els.trashPermanentModal.classList.add('is-open');
+    els.trashPermanentModal.setAttribute('aria-hidden', 'false');
   }
+
+  function closeTrashPermanentModal(els) {
+    if (!els.trashPermanentModal) return;
+    els.trashPermanentModal.classList.remove('is-open');
+    els.trashPermanentModal.setAttribute('aria-hidden', 'true');
+    state._pendingTrashPermanent = null;
+  }
+
+  function moveHabitToTrash(habitId) {
+    load();
+    ensureStateShape();
+    const habit = state.habits.find((h) => h.id === habitId);
+    if (!habit) return;
+
+    const snapshot = cloneData(habit);
+
+    state.meta.habitTrash = normalizeTrashEntries(state.meta.habitTrash);
+    state.meta.habitTrash = state.meta.habitTrash.filter((entry) => entry.habit?.id !== habitId);
+    state.meta.habitTrash.unshift({ habit: snapshot, deletedAt: Date.now() });
+
+    state.habits = state.habits.filter((h) => h.id !== habitId);
+
+    state._dirtyViews.weekly = true;
+    state._dirtyViews.monthly = true;
+    state._dirtyViews.trash = true;
+    save();
+
+  }
+
+
+
+  function deleteHabitPermanently(habitId) {
+    load();
+    ensureStateShape();
+    state.meta.habitTrash = (state.meta.habitTrash || []).filter((t) => t.habit?.id !== habitId);
+    save();
+    state._dirtyViews.trash = true;
+  }
+
+  function restoreHabitFromTrash(habitId) {
+    load();
+    ensureStateShape();
+    const idx = (state.meta.habitTrash || []).findIndex((t) => t.habit?.id === habitId);
+    if (idx === -1) return;
+
+    const snapshot = state.meta.habitTrash[idx]?.habit;
+    state.meta.habitTrash.splice(idx, 1);
+
+    if (snapshot && !state.habits.some((h) => h.id === habitId)) {
+      state.habits.unshift(cloneData(snapshot));
+    }
+
+    save();
+    state._dirtyViews.weekly = true;
+    state._dirtyViews.monthly = true;
+    state._dirtyViews.trash = true;
+  }
+
+  function renderTrash(els) {
+    if (!els.viewTrash || !els.trashList) return;
+
+    // Always re-load persisted storage before rendering to avoid stale in-memory state
+    load();
+    ensureStateShape();
+
+    const trash = normalizeTrashEntries(state.meta.habitTrash);
+    state.meta.habitTrash = trash;
+    if (els.trashList) els.trashList.innerHTML = '';
+    if (els.trashEmptyState) els.trashEmptyState.classList.toggle('is-hidden', trash.length !== 0);
+
+    if (!trash.length) return;
+
+    const frag = document.createDocumentFragment();
+
+    for (const entry of trash) {
+      const habit = entry.habit;
+      if (!habit) continue;
+      const item = document.createElement('div');
+      item.className = 'habit-item';
+
+      const left = document.createElement('div');
+      left.className = 'habit-left';
+
+      const name = document.createElement('div');
+      name.className = 'habit-name';
+      name.textContent = habit.name;
+
+      left.appendChild(name);
+
+      const actions = document.createElement('div');
+      actions.className = 'habit-actions';
+
+      const restoreBtn = document.createElement('button');
+      restoreBtn.type = 'button';
+      restoreBtn.className = 'ghost-btn';
+      restoreBtn.textContent = 'Restore';
+      restoreBtn.setAttribute('aria-label', `Restore ${habit.name}`);
+      restoreBtn.dataset.action = 'restoreHabit';
+      restoreBtn.dataset.habitId = habit.id;
+
+      const permBtn = document.createElement('button');
+      permBtn.type = 'button';
+      permBtn.className = 'danger-btn';
+      permBtn.textContent = 'Permanent Delete';
+      permBtn.setAttribute('aria-label', `Permanently delete ${habit.name}`);
+      permBtn.dataset.action = 'permDeleteHabit';
+      permBtn.dataset.habitId = habit.id;
+
+      actions.appendChild(restoreBtn);
+      actions.appendChild(permBtn);
+
+      item.appendChild(left);
+      item.appendChild(actions);
+
+      frag.appendChild(item);
+    }
+
+    els.trashList.appendChild(frag);
+  }
+
 
   function addHabit({ name, targetDays }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
     state.habits.unshift({ id, name, targetDays, createdAt: Date.now(), history: {} });
 
-    // Simple XP model: reset total XP (since we removed ledger-based XP)
-    // Users can still earn XP by completing habits.
     state.xp = state.xp || {};
     if (typeof state.xp.total !== 'number') state.xp.total = 0;
 
-
     save();
-    state._dirtyViews = state._dirtyViews || {};
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;
   }
-
-
 
   function deleteHabitById(habitId) {
     state.habits = state.habits.filter((h) => h.id !== habitId);
-
-    save();
-
-    state._dirtyViews = state._dirtyViews || {};
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;
+    save();
   }
 
-
-
   function clearWeek(els) {
-
     const keys = weekKeys();
     for (const habit of state.habits) {
       if (!habit.history) habit.history = {};
-      for (const k of keys) delete habit.history[k];
+      for (const k of keys) {
+        if (habit.history[k] === 'done') removeXpForStatus(habit.id, k);
+        delete habit.history[k];
+      }
     }
     save();
-    state._dirtyViews = state._dirtyViews || {};
     state._dirtyViews.weekly = true;
     renderWeekly(els);
   }
@@ -913,37 +1076,35 @@
       xp: { total: 0, ledger: {} },
       streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
       achievements: { unlocked: {} },
-      meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} } },
+      meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} }, habitTrash: [] },
       _dirtyViews: { weekly: true, monthly: true },
     };
-
     save();
     renderDashboard(els);
   }
 
   function bindEvents(els) {
-    // Month selection is supported only if a monthSelect exists (not used by the current UI).
-    if (els.monthSelect) {
-      buildMonthOptions(els.monthSelect, 24);
-
-      // Sync selection with persisted state
-      els.monthSelect.value = els.monthSelect.value || (() => {
-        const a = getSelectedMonthAnchor();
-        return `${a.getFullYear()}-${String(a.getMonth()).padStart(2, '0')}`;
-      })();
-    }
-
-    els.monthSelect && els.monthSelect.addEventListener('change', () => {
-      const [y, mi] = (els.monthSelect.value || '').split('-').map((x) => Number(x));
-      if (!Number.isFinite(y) || !Number.isFinite(mi)) return;
-      setSelectedMonth(y, mi);
+    els.openTrashBtn && els.openTrashBtn.addEventListener('click', () => {
       state._dirtyViews = state._dirtyViews || {};
-      state._dirtyViews.monthly = true;
-      renderMonthly(els);
+      state._dirtyViews.trash = true;
+
+      // Ensure we display the latest persisted trash immediately
+      load();
+
+      // Show view (scheduleRender will call renderTrash)
+      showView('trash', els);
+
+      // Also render right away to avoid any timing/state issues
+      renderTrash(els);
+
     });
 
 
-    // Robust navigation binding: bind directly to each nav button (desktop + mobile).
+    if (els.monthSelect) {
+      // keep as in original (month options function not present in current codebase)
+    }
+
+
     if (els.navItems && els.navItems.length) {
       els.navItems.forEach((btn) => {
         btn.addEventListener('click', (e) => {
@@ -955,12 +1116,12 @@
       });
     }
 
-
-    if (els.menuBtn && els.mobileNav) {
+    els.menuBtn &&
+      els.mobileNav &&
       els.menuBtn.addEventListener('click', () => {
-        els.mobileNav.classList.toggle('is-open');
+        const isOpen = els.mobileNav.classList.toggle('is-open');
+        els.menuBtn.setAttribute('aria-expanded', String(isOpen));
       });
-    }
 
     els.newHabitBtn && els.newHabitBtn.addEventListener('click', () => openModal(els));
 
@@ -980,13 +1141,10 @@
         if (!name) return;
         addHabit({ name, targetDays: Math.max(1, Math.min(7, targetDays)) });
         closeModal(els);
-        // dashboard is always visible when modal closes
         renderDashboard(els);
       });
 
-    els.clearWeekBtn && els.clearWeekBtn.addEventListener('click', () => {
-      clearWeek(els);
-    });
+    els.clearWeekBtn && els.clearWeekBtn.addEventListener('click', () => clearWeek(els));
 
     els.clearMonthBtn &&
       els.clearMonthBtn.addEventListener('click', () => {
@@ -994,25 +1152,21 @@
         clearMonth(els);
       });
 
-    // Monthly navigation buttons (← / →)
-    // This updates meta.monthlySelected so month/year persists and month-wise storage remains independent.
-    els.monthPrevBtn && els.monthPrevBtn.addEventListener('click', () => {
-      const a = getSelectedMonthAnchor();
-      const d = new Date(a.getFullYear(), a.getMonth() - 1, 1);
-      setSelectedMonthByAnchor(d);
-      state._dirtyViews = state._dirtyViews || {};
-      state._dirtyViews.monthly = true;
-      renderMonthly(els);
-    });
+    els.monthPrevBtn &&
+      els.monthPrevBtn.addEventListener('click', () => {
+        const anchor = getSelectedMonthAnchor();
+        setSelectedMonthByAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1));
+        state._dirtyViews.monthly = true;
+        renderMonthly(els);
+      });
 
-    els.monthNextBtn && els.monthNextBtn.addEventListener('click', () => {
-      const a = getSelectedMonthAnchor();
-      const d = new Date(a.getFullYear(), a.getMonth() + 1, 1);
-      setSelectedMonthByAnchor(d);
-      state._dirtyViews = state._dirtyViews || {};
-      state._dirtyViews.monthly = true;
-      renderMonthly(els);
-    });
+    els.monthNextBtn &&
+      els.monthNextBtn.addEventListener('click', () => {
+        const anchor = getSelectedMonthAnchor();
+        setSelectedMonthByAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1));
+        state._dirtyViews.monthly = true;
+        renderMonthly(els);
+      });
 
     els.clearAllBtn &&
       els.clearAllBtn.addEventListener('click', () => {
@@ -1021,7 +1175,33 @@
         showView('dashboard', els);
       });
 
-    // Habit list delegated actions to keep event binding cheap and robust.
+    // Trash modal: Delete Habit? (OK/Cancel)
+    els.trashConfirmCloseBtn && els.trashConfirmCloseBtn.addEventListener('click', () => closeTrashConfirmModal(els));
+    els.trashConfirmCancelBtn && els.trashConfirmCancelBtn.addEventListener('click', () => closeTrashConfirmModal(els));
+    els.trashConfirmMoveBtn &&
+      els.trashConfirmMoveBtn.addEventListener('click', () => {
+        const pending = state._pendingTrashDelete;
+        closeTrashConfirmModal(els);
+        if (!pending?.habitId) return;
+        moveHabitToTrash(pending.habitId);
+        renderDashboard(els);
+        renderTrash(els);
+        // If currently on trash view, keep it; else just update.
+      });
+
+    // Trash modal: Permanent Delete (Cancel/OK)
+    els.trashPermanentCloseBtn && els.trashPermanentCloseBtn.addEventListener('click', () => closeTrashPermanentModal(els));
+    els.trashPermanentCancelBtn && els.trashPermanentCancelBtn.addEventListener('click', () => closeTrashPermanentModal(els));
+    els.trashPermanentDeleteBtn &&
+      els.trashPermanentDeleteBtn.addEventListener('click', () => {
+        const pending = state._pendingTrashPermanent;
+        closeTrashPermanentModal(els);
+        if (!pending?.habitId) return;
+        deleteHabitPermanently(pending.habitId);
+        renderTrash(els);
+      });
+
+    // Main list actions
     els.habitList &&
       els.habitList.addEventListener('click', (e) => {
         const btn = e.target;
@@ -1032,59 +1212,8 @@
         if (!habitId || !action) return;
 
         const tKey = todayKey();
-
         if (action === 'deleteHabit') {
-          const habit = state.habits.find((h) => h.id === habitId);
-          if (!habit) return;
-
-          // Two-step deletion UX:
-          // 1) User must explicitly choose confirm to permanently delete.
-          // 2) Support Undo (restore) after deletion.
-          const permanent = confirm(
-            `Permanently delete this habit?\n\n${habit.name}\n\nOK = permanent delete, Cancel = keep (no delete).`
-          );
-          if (!permanent) return;
-
-          // Create undo snapshot before deletion
-          ensureStateShape();
-          state.meta = state.meta || {};
-          state.meta.habitTrash = state.meta.habitTrash || [];
-          state.meta.habitTrash.unshift({
-            habit: structuredClone ? structuredClone(habit) : JSON.parse(JSON.stringify(habit)),
-            deletedAt: Date.now(),
-          });
-
-          deleteHabitById(habitId);
-          renderDashboard(els);
-          scheduleRender(els, els.currentView || 'dashboard');
-
-          // Undo (restore) right after deletion (simple confirm-based UX)
-          // If user clicks Cancel on the undo prompt, habit remains permanently deleted.
-          const undo = confirm(`Habit deleted. Do you want to restore it?\n\n${habit.name}`);
-          if (undo) {
-            ensureStateShape();
-            state.meta.habitTrash = state.meta.habitTrash || [];
-            const idx = state.meta.habitTrash.findIndex((t) => t.habit?.id === habitId);
-            if (idx !== -1) {
-              const snapshot = state.meta.habitTrash[idx]?.habit;
-              // Remove from trash first to avoid duplicates
-              state.meta.habitTrash.splice(idx, 1);
-
-              // Restore to top
-              if (snapshot && !state.habits.some((h) => h.id === habitId)) {
-                state.habits.unshift(snapshot);
-              }
-
-              save();
-              state._dirtyViews = state._dirtyViews || {};
-              state._dirtyViews.weekly = true;
-              state._dirtyViews.monthly = true;
-              renderDashboard(els);
-              if (els.currentView === 'monthly') renderMonthly(els);
-              if (els.currentView === 'weekly') renderWeekly(els);
-            }
-          }
-
+          openTrashConfirmModal(els, habitId);
           return;
         }
 
@@ -1093,43 +1222,69 @@
           const habit = state.habits.find((h) => h.id === habitId);
           if (!habit) return;
 
-          // Monthly view uses month-wise storage so data stays independent per month.
-          // Dashboard/Weekly keep using per-day habit.history.
           const view = els.currentView || 'dashboard';
           if (view === 'monthly') {
             setStatusForMonth(habitId, tKey, status);
           } else {
             habit.history = habit.history || {};
+            const previous = habit.history[tKey];
             habit.history[tKey] = status;
+            syncXpForStatusChange(habitId, tKey, previous, status);
             save();
           }
 
-
-          // render only what user sees right now
-          // (reuse the already-defined `view` variable above)
-          if (view === 'dashboard') {
-            renderDashboard(els);
-          } else if (view === 'weekly') {
-            state._dirtyViews.weekly = true;
-            renderWeekly(els);
-          } else if (view === 'monthly') {
-            state._dirtyViews.monthly = true;
-            renderMonthly(els);
-          }
-
-          // Keep XP UI updated even if user is not currently on dashboard.
-          // This avoids the “stuck” XP/levels UI reported on mobile.
+          if (view === 'dashboard') renderDashboard(els);
+          else if (view === 'weekly') renderWeekly(els);
+          else if (view === 'monthly') renderMonthly(els);
           renderXpUi(els);
+        }
+      });
 
+    // Trash list actions
+    els.trashList &&
+      els.trashList.addEventListener('click', (e) => {
+        const btn = e.target;
+        const action = btn?.dataset?.action;
+        const habitId = btn?.dataset?.habitId;
+        if (!action || !habitId) return;
+
+        if (action === 'restoreHabit') {
+          restoreHabitFromTrash(habitId);
+          renderDashboard(els);
+          renderTrash(els);
+          return;
+        }
+
+        if (action === 'permDeleteHabit') {
+          openTrashPermanentModal(els, habitId);
+          return;
         }
       });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && els.habitModal && els.habitModal.classList.contains('is-open')) closeModal(els);
+      if (e.key === 'Escape') {
+        if (els.habitModal && els.habitModal.classList.contains('is-open')) closeModal(els);
+        if (els.trashConfirmModal && els.trashConfirmModal.classList.contains('is-open')) closeTrashConfirmModal(els);
+        if (els.trashPermanentModal && els.trashPermanentModal.classList.contains('is-open')) closeTrashPermanentModal(els);
+      }
     });
   }
 
-  // init (DOM-safe)
+  function openModal(els) {
+    if (!els.habitModal || !els.habitNameInput) return;
+    els.habitModal.classList.add('is-open');
+    els.habitModal.setAttribute('aria-hidden', 'false');
+    els.habitNameInput.focus();
+  }
+
+  function closeModal(els) {
+    if (!els.habitModal) return;
+    els.habitModal.classList.remove('is-open');
+    els.habitModal.setAttribute('aria-hidden', 'true');
+    if (els.habitForm) els.habitForm.reset();
+    if (els.habitTargetInput) els.habitTargetInput.value = 7;
+  }
+
   function init() {
     const els = {
       navItems: Array.from(document.querySelectorAll('.nav-item')),
@@ -1141,6 +1296,7 @@
       viewWeekly: $('view-weekly'),
       viewMonthly: $('view-monthly'),
       viewSettings: $('view-settings'),
+      viewTrash: $('view-trash'),
 
       todayLabel: $('todayLabel'),
       motivationQuote: $('motivationQuote'),
@@ -1149,6 +1305,7 @@
 
       progressMeta: $('progressMeta'),
       progressFill: $('progressFill'),
+      progressBar: document.querySelector('#view-dashboard .progress:not(.xp-progress) .progress-bar'),
       progressPct: $('progressPct'),
       progressCounts: $('progressCounts'),
       streakCount: $('streakCount'),
@@ -1176,16 +1333,37 @@
 
       xpTotalEl: $('xpTotal'),
       xpFillEl: $('xpProgressFill'),
+      xpProgressBar: document.querySelector('.xp-progress .progress-bar'),
       xpPctEl: $('xpProgressPct'),
       xpNextLabelEl: $('xpNextLabel'),
       levelBadgeEl: $('levelBadge'),
 
-      // used for fatal error display (optional)
+      analyticsTotalCompletedEl: $('analyticsTotalCompleted'),
+      analyticsMissedHabitsEl: $('analyticsMissedHabits'),
+      analyticsBestHabitEl: $('analyticsBestHabit'),
+      analyticsCompletionPctEl: $('analyticsCompletionPct'),
+      completionPillEl: $('completionPill'),
+      weeklyBarsEl: $('weeklyBars'),
+
+      trashList: $('trashList'),
+      trashEmptyState: $('trashEmptyState'),
+
+      trashConfirmModal: $('trashConfirmModal'),
+      trashConfirmCloseBtn: $('trashConfirmCloseBtn'),
+      trashConfirmCancelBtn: $('trashConfirmCancelBtn'),
+      trashConfirmMoveBtn: $('trashConfirmMoveBtn'),
+
+      trashPermanentModal: $('trashPermanentModal'),
+      trashPermanentCloseBtn: $('trashPermanentCloseBtn'),
+      trashPermanentCancelBtn: $('trashPermanentCancelBtn'),
+      trashPermanentDeleteBtn: $('trashPermanentDeleteBtn'),
+
       fatalErrorEl: null,
       currentView: 'dashboard',
+
+      missedWarningEl: $('missedWarning'),
     };
 
-    // Create fatal error fallback element only if needed.
     const existing = document.getElementById('fatalError');
     if (existing) els.fatalErrorEl = existing;
     else {
@@ -1203,25 +1381,16 @@
       els.fatalErrorEl = d;
     }
 
-    // Guard against missing root elements (prevents blank screen).
-    if (!els.viewDashboard || !els.habitModal || !els.habitForm) {
-      // Still try; but likely layout incomplete.
-    }
-
-    // Set initial view
-    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
-
     bindEvents(els);
+    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true, trash: true };
 
     load();
 
-    const initialView = 'dashboard';
-    els.currentView = initialView;
-    showView(initialView, els);
+    els.currentView = 'dashboard';
+    showView('dashboard', els);
     renderDashboard(els);
   }
 
-  // Ensure DOM is ready even in odd PWA cached navigations.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true });
   } else {

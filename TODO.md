@@ -1,15 +1,9 @@
-# HabitTracker TODO
+# Task TODO: Recycle Bin UI shows deleted habits
 
-- [x] Add month navigation (←/→) and month-wise independent storage.
-- [ ] Add Trash/Recycle Bin for deleted habits:
-  - [ ] Add Trash section to `index.html`.
-  - [ ] Add modals for:
-    - [ ] Move to Trash ("Delete Habit?" / "Do you want to move this habit to Trash?")
-    - [ ] Permanent delete confirmation.
-  - [ ] Update `script.js` so delete moves to trash (no immediate permanent delete).
-  - [ ] Implement Restore + Permanent Delete buttons in trash.
-  - [ ] Persist trash in Local Storage (using existing `meta.habitTrash`).
-  - [ ] Ensure Weekly/Monthly/Dashboard/Completion remain unchanged.
-  - [ ] Minimal CSS only if required for layout.
-
+- [ ] Fix Recycle Bin functionality (JS-only)
+- [ ] Ensure `renderTrash()` loads latest `trash` from persisted state and logs `console.log("Trash Data:", trash);`
+- [ ] Ensure Settings → Recycle Bin → Open triggers `load()` and `renderTrash()` so items appear immediately
+- [ ] Verify restore moves habit back to active list and removes from trash
+- [ ] Verify permanent delete confirms before removing from trash
+- [ ] Verify persistence after refresh/restart
 

@@ -6,7 +6,10 @@
 
 
   <title>Habits — Daily Tracker</title>
+  <meta name="theme-color" content="#0f172a" />
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.png" type="image/png" />
+  <link rel="apple-touch-icon" href="icon.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -53,7 +56,7 @@
     <main class="main">
       <header class="topbar">
         <div class="top-left">
-          <button class="hamburger" id="menuBtn" type="button" aria-label="Open menu">☰</button>
+          <button class="hamburger" id="menuBtn" type="button" aria-label="Open menu" aria-controls="mobileNav" aria-expanded="false">☰</button>
           <h1>Today</h1>
           <div class="sub" id="todayLabel">—</div>
         </div>
@@ -275,11 +278,21 @@
 
             <div class="settings-row">
               <div>
+                <div class="setting-label">Recycle Bin</div>
+                <div class="setting-sub">Restore or permanently delete deleted habits.</div>
+              </div>
+              <button class="ghost-btn" id="openTrashBtn" type="button">Open</button>
+            </div>
+
+
+            <div class="settings-row">
+              <div>
                 <div class="setting-label">Reset all data</div>
                 <div class="setting-sub">Removes habits and history stored in this browser.</div>
               </div>
               <button class="danger-btn" id="clearAllBtn" type="button">Delete all</button>
             </div>
+
           </div>
         </div>
       </section>
