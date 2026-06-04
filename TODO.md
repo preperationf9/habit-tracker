@@ -1,29 +1,15 @@
-# TODO — Month tracking picker fix
+# HabitTracker TODO
 
-## Step 1: Add Month Picker UI
-- [ ] Update `index.html` monthly view header area to include:
-  - Month dropdown (`#monthSelect`)
-  - Prev/Next buttons (optional but planned)
+- [x] Add month navigation (←/→) and month-wise independent storage.
+- [ ] Add Trash/Recycle Bin for deleted habits:
+  - [ ] Add Trash section to `index.html`.
+  - [ ] Add modals for:
+    - [ ] Move to Trash ("Delete Habit?" / "Do you want to move this habit to Trash?")
+    - [ ] Permanent delete confirmation.
+  - [ ] Update `script.js` so delete moves to trash (no immediate permanent delete).
+  - [ ] Implement Restore + Permanent Delete buttons in trash.
+  - [ ] Persist trash in Local Storage (using existing `meta.habitTrash`).
+  - [ ] Ensure Weekly/Monthly/Dashboard/Completion remain unchanged.
+  - [ ] Minimal CSS only if required for layout.
 
-## Step 2: Persist selected month
-- [ ] Update `script.js` state/meta to store selected month (year + monthIndex)
-- [ ] Generate month options for last 24 months by default
-
-## Step 3: Render monthly based on selected month
-- [ ] Update `renderMonthly()` to use selected month anchor instead of `new Date()`
-
-## Step 4: Reset month uses selected month
-- [ ] Update `clearMonth()` to clear history only for selected month
-
-## Step 5: Wire events
-- [ ] Bind `monthSelect` change and Prev/Next click to update selected month and rerender
-
-## Step 6: Styling
-- [ ] Add minimal CSS for month picker alignment/spacing if needed
-
-## Step 7: Smoke test
-- [ ] Switch to Monthly view and select April/May/June
-- [ ] Verify correct day columns for selected month
-- [ ] Mark a habit for a day in selected month, confirm it appears
-- [ ] Click Reset month and confirm only that selected month clears
 

@@ -362,6 +362,16 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   background:rgba(255,255,255,.03);
 }
 
+/* Minimal Monthly nav button layout tweaks (no redesign) */
+#view-monthly .month-nav-btn{
+  min-width:44px;
+}
+
+#view-monthly .month-nav-label{
+  display:inline-flex;
+  align-items:center;
+}
+
 /* Mobile responsiveness */
 @media (max-width: 820px){
   .app{grid-template-columns: 1fr;}

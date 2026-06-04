@@ -246,15 +246,19 @@
               <button class="ghost-btn" id="clearMonthBtn" type="button">Reset month</button>
             </div>
 
-            <div class="card" style="padding:14px 16px;margin-top:10px;background:rgba(255,255,255,.02);">
+              <div class="card" style="padding:14px 16px;margin-top:10px;background:rgba(255,255,255,.02);">
               <div class="card-head" style="margin-bottom:0;">
                 <div>
                   <div class="card-sub" style="margin-top:0;">Month</div>
                 </div>
 
-              <div class="pill" id="monthRangePill">—</div>
+              <button class="ghost-btn month-nav-btn" id="monthPrevBtn" type="button" aria-label="Previous month">←</button>
+              <div class="pill month-nav-label" id="monthRangePill">—</div>
+              <button class="ghost-btn month-nav-btn" id="monthNextBtn" type="button" aria-label="Next month">→</button>
+
               </div>
             </div>
+
 
             <div class="hint" style="margin-top:10px;">Monthly view shows ✓/✕/— for each day of this month.</div>
 
@@ -285,8 +289,64 @@
     </main>
   </div>
 
+  <!-- Delete/Trash Confirm Modals -->
+  <div class="modal" id="trashConfirmModal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Delete Habit?</div>
+          <div class="modal-sub">Do you want to move this habit to Trash?</div>
+        </div>
+        <button class="icon-btn" type="button" id="trashConfirmCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" type="button" id="trashConfirmCancelBtn">Cancel</button>
+        <button class="danger-btn" type="button" id="trashConfirmMoveBtn">Move to Trash</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="trashPermanentModal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">This action cannot be undone</div>
+          <div class="modal-sub">Permanently delete this habit?</div>
+        </div>
+        <button class="icon-btn" type="button" id="trashPermanentCloseBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" type="button" id="trashPermanentCancelBtn">Cancel</button>
+        <button class="danger-btn" type="button" id="trashPermanentDeleteBtn">Permanently Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trash section -->
+  <section class="view is-hidden" id="view-trash">
+    <div class="grid grid--two">
+      <div class="card card--wide">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Trash</div>
+            <div class="card-sub">Restore or permanently delete habits.</div>
+          </div>
+        </div>
+
+        <div class="hint" style="margin-top:10px;">Deleted habits are stored locally in this browser.</div>
+        <div class="habit-list" id="trashList" aria-live="polite" style="margin-top:12px;"></div>
+        <div class="empty is-hidden" id="trashEmptyState">
+          <div class="empty-ic">🗑️</div>
+          <div class="empty-title">Trash is empty</div>
+          <div class="empty-sub">Delete a habit to see it here.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Add Habit Modal -->
   <div class="modal" id="habitModal" aria-hidden="true" role="dialog" aria-modal="true">
+
     <div class="modal-card">
       <div class="modal-head">
         <div>
