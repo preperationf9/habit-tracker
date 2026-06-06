@@ -313,12 +313,23 @@
   }
 
   function isHabitDayComplete(dateKey) {
+    // Streak is earned when the required condition is met for that day.
+    // Current app setup implies:
+    // - If there are multiple habits, user expects streak only when EVERY habit is marked done
+    //   (see requirement text: "(or all required habits, depending on the current setup)").
+    // - However, we should NOT require explicit 'not_done' entries; only treat missing/undefined
+    //   history as not completed.
     if (!state.habits.length) return false;
+
+    // Every habit must be marked 'done' for that date.
     for (const habit of state.habits) {
-      if (habit.history?.[dateKey] !== 'done') return false;
+      const h = habit?.history;
+      if (!h || h[dateKey] !== 'done') return false;
     }
     return true;
   }
+
+
 
   function computeStreakUpTo(dateKeyInclusive) {
     let streak = 0;
