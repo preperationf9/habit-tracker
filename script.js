@@ -2,15 +2,18 @@
   'use strict';
 
   const STORAGE_KEY = 'habitTracker.v1';
-  const STORAGE_MIGRATION_VERSION = 2;
+  const STORAGE_MIGRATION_VERSION = 3;
+
 
   const XP = { completeHabit: 10 };
 
   /**
    * @typedef {'done'|'not_done'} HabitStatus
    * @typedef {{ [dateKey: string]: HabitStatus }} HabitHistory
-   * @typedef {{id:string,name:string,targetDays:number,createdAt:number,history: HabitHistory}} Habit
+   * @typedef {'daily'|'specific'} ReminderType
+   * @typedef {{id:string,name:string,targetDays:number,createdAt:number,history: HabitHistory, reminderTime?: string, reminderType?: ReminderType, reminderDays?: string[]}} Habit
    */
+
 
   /**
    * @typedef {{
@@ -212,7 +215,18 @@
       out.targetDays = safeNumber(out.targetDays, 7);
       out.createdAt = safeNumber(out.createdAt, Date.now());
       out.history = out.history && typeof out.history === 'object' ? out.history : {};
+
+      // Optional reminder fields (additive, non-destructive defaults for old habits)
+      out.reminderTime = typeof out.reminderTime === 'string' ? out.reminderTime : '';
+      out.reminderType = out.reminderType === 'specific' ? 'specific' : 'daily';
+      out.reminderDays = Array.isArray(out.reminderDays) ? out.reminderDays : [];
+      if (!Array.isArray(out.reminderDays)) out.reminderDays = [];
+      // Keep only known weekday labels for safety
+      const allowed = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']);
+      out.reminderDays = out.reminderDays.filter((d) => typeof d === 'string' && allowed.has(d));
+
       return out;
+
     });
 
     merged.meta = merged.meta && typeof merged.meta === 'object' ? merged.meta : base.meta;
@@ -893,6 +907,662 @@
 
   function renderSettings() {}
 
+  // -----------------------------
+  // Reminder / Alarm (non-breaking)
+  // -----------------------------
+
+  const REMINDER_WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+
+  function setReminderSound(soundValue) {
+    ensureStateShape();
+    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
+    state.meta.settings.reminderSound = getReminderSoundFromValue(soundValue);
+    save();
+  }
+
+  // -----------------------------
+  // Custom Reminder Sound (offline via IndexedDB)
+  // -----------------------------
+
+
+  const CUSTOM_SOUND_DB_NAME = 'habitTrackerReminderAudioDB';
+  const CUSTOM_SOUND_DB_VERSION = 1;
+  const CUSTOM_SOUND_STORE = 'audioBlobs';
+
+  /** @type {IDBDatabase | null} */
+  let customSoundDb = null;
+
+  function openCustomSoundDb() {
+    return new Promise((resolve) => {
+      try {
+        if (customSoundDb) return resolve(customSoundDb);
+        const req = indexedDB.open(CUSTOM_SOUND_DB_NAME, CUSTOM_SOUND_DB_VERSION);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(CUSTOM_SOUND_STORE)) {
+            db.createObjectStore(CUSTOM_SOUND_STORE, { keyPath: 'key' });
+          }
+        };
+        req.onsuccess = () => {
+          customSoundDb = req.result;
+          resolve(customSoundDb);
+        };
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  async function saveCustomSoundToIndexedDB({ key, blob, fileName }) {
+    const db = await openCustomSoundDb();
+    if (!db) return false;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction([CUSTOM_SOUND_STORE], 'readwrite');
+        const store = tx.objectStore(CUSTOM_SOUND_STORE);
+        store.put({ key, blob, fileName: String(fileName || '') });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  async function deleteCustomSoundFromIndexedDB(key) {
+    const db = await openCustomSoundDb();
+    if (!db) return false;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction([CUSTOM_SOUND_STORE], 'readwrite');
+        const store = tx.objectStore(CUSTOM_SOUND_STORE);
+        store.delete(key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  async function loadCustomSoundFromIndexedDB(key) {
+    const db = await openCustomSoundDb();
+    if (!db) return null;
+
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction([CUSTOM_SOUND_STORE], 'readonly');
+        const store = tx.objectStore(CUSTOM_SOUND_STORE);
+        const req = store.get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  /** @type {{ blob: Blob, fileName: string } | null} */
+  let customSoundCache = null;
+  /** @type {string | null} */
+  let customSoundObjectUrl = null;
+
+  function getCustomSoundFromState() {
+    ensureStateShape();
+    const s = state.meta.settings || (state.meta.settings = { reducedMotion: false, sound: true });
+    return {
+      selected: s.reminderSound === 'custom',
+      customSet: !!s.customSoundSet,
+    };
+  }
+
+  function getCustomSoundFileNameSafe() {
+    ensureStateShape();
+    const s = state.meta.settings || {};
+    if (typeof s.customSoundFileName === 'string' && s.customSoundFileName.trim()) return s.customSoundFileName;
+    return '';
+  }
+
+  function setCustomSoundSelected(selected) {
+    ensureStateShape();
+    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
+    state.meta.settings.reminderSound = selected ? 'custom' : 'bell';
+    save();
+  }
+
+  async function ensureCustomSoundLoaded() {
+    try {
+      if (customSoundCache?.blob) return customSoundCache;
+      const rec = await loadCustomSoundFromIndexedDB('custom');
+      if (!rec?.blob) return null;
+      customSoundCache = { blob: rec.blob, fileName: rec.fileName || '' };
+      return customSoundCache;
+    } catch {
+      return null;
+    }
+  }
+
+  function cleanupCustomSoundObjectUrl() {
+    try {
+      if (customSoundObjectUrl) {
+        URL.revokeObjectURL(customSoundObjectUrl);
+      }
+    } catch {
+      // ignore
+    } finally {
+      customSoundObjectUrl = null;
+    }
+  }
+
+  // Play either custom audio (if selected) or built-in WebAudio sounds.
+  // Enforces max playback duration of 30 seconds.
+  async function playReminderSoundSafe() {
+    try {
+      if (state?.meta?.settings?.sound === false) return;
+
+      const s = state?.meta?.settings || {};
+      const selected = s.reminderSound === 'custom';
+
+      if (selected) {
+        const cache = await ensureCustomSoundLoaded();
+        if (!cache?.blob) {
+          console.warn('[CustomSound] selected but no custom audio loaded; falling back');
+          playReminderSound(getSelectedReminderSound());
+          return;
+        }
+
+        cleanupCustomSoundObjectUrl();
+        const url = URL.createObjectURL(cache.blob);
+        customSoundObjectUrl = url;
+
+        const a = new Audio(url);
+        a.preload = 'auto';
+
+        let stopped = false;
+        const stopTimer = window.setTimeout(() => {
+          if (stopped) return;
+          stopped = true;
+          try {
+            a.pause();
+            a.currentTime = 0;
+          } catch {
+            // ignore
+          }
+        }, 30000);
+
+        a.onerror = () => {
+          try {
+            clearTimeout(stopTimer);
+          } catch {
+            // ignore
+          }
+          console.warn('[CustomSound] audio error; falling back');
+          try {
+            playReminderSound('bell');
+          } catch {
+            // ignore
+          }
+        };
+
+        try {
+          await unlockAudioIfNeeded();
+        } catch {
+          // ignore
+        }
+
+        try {
+          await a.play();
+        } catch {
+          clearTimeout(stopTimer);
+          console.warn('[CustomSound] play blocked; falling back');
+          playReminderSound('bell');
+          return;
+        }
+
+        a.onended = () => {
+          if (stopped) return;
+          stopped = true;
+          clearTimeout(stopTimer);
+          cleanupCustomSoundObjectUrl();
+        };
+
+        a.onpause = () => {
+          if (!stopped) return;
+          cleanupCustomSoundObjectUrl();
+        };
+
+        return;
+      }
+
+      // built-in
+      playReminderSound();
+    } catch {
+      // ignore and last-resort fallback
+      try {
+        playReminderSound();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+
+
+  // Preserve existing reminder code but ensure custom sound option routes through playReminderSoundSafe
+  // IMPORTANT: custom selected sound routing
+  // (Built-in reminder sound implementation below will call playSelectedReminderSound().)
+  function playSelectedReminderSound() {
+    try {
+      console.log('[ReminderSound] playSelectedReminderSound() called');
+      if (state?.meta?.settings?.sound === false) return;
+
+      const t = getSelectedReminderSound();
+      if (t === 'custom') {
+        playReminderSoundSafe();
+        return;
+      }
+
+      unlockAudioIfNeeded()
+        .then(() => playReminderSound(t))
+        .catch(() => playReminderSound(t));
+    } catch {
+      // ignore
+    }
+  }
+
+
+  // -----------------------------
+  // Existing built-in reminder sound implementation (kept)
+  // -----------------------------
+
+
+
+  function weekdayLabelForDate(d) {
+    const day = d.getDay(); // 0=Sun
+    const map = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return map[day];
+  }
+
+  function normalizeTimeHHMM(t) {
+    const s = String(t || '').trim();
+    if (!/^\d{2}:\d{2}$/.test(s)) return '';
+    const [hh, mm] = s.split(':').map((x) => Number(x));
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return '';
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return '';
+    return s;
+  }
+
+  // Convert 12-hour UI parts to HH:MM (24-hour) for reminder matching.
+  function normalizeTime12PartsToHHMM(hour12Str, minuteStr, ampm) {
+    const h = Number(hour12Str);
+    const m = Number(minuteStr);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return '';
+    if (h < 1 || h > 12) return '';
+    if (m < 0 || m > 59) return '';
+
+    const ap = String(ampm || '').toUpperCase();
+    if (ap !== 'AM' && ap !== 'PM') return '';
+
+    let hh24 = ap === 'AM' ? (h === 12 ? 0 : h) : (h === 12 ? 12 : h + 12);
+    hh24 = Math.max(0, Math.min(23, hh24));
+
+    return `${String(hh24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
+  function currentTimeHHMM(d = new Date()) {
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  function ensureToastContainer() {
+    let el = document.getElementById('habitReminderToastHost');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'habitReminderToastHost';
+    el.style.position = 'fixed';
+    el.style.right = '14px';
+    el.style.bottom = '14px';
+    el.style.zIndex = '9999';
+    el.style.display = 'flex';
+    el.style.flexDirection = 'column';
+    el.style.gap = '10px';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function showToast(message, opts = {}) {
+    const host = ensureToastContainer();
+
+    const wrap = document.createElement('div');
+    wrap.textContent = message;
+    wrap.style.background = 'rgba(15,23,42,.95)';
+    wrap.style.color = 'rgba(255,255,255,.95)';
+    wrap.style.border = '1px solid rgba(255,255,255,.10)';
+    wrap.style.borderRadius = '14px';
+    wrap.style.padding = '10px 12px';
+    wrap.style.fontWeight = '800';
+    wrap.style.fontSize = '13px';
+    wrap.style.boxShadow = '0 10px 30px rgba(0,0,0,.35)';
+
+    const role = opts.role;
+    if (role) wrap.setAttribute('role', role);
+    if (opts.ariaLive) wrap.setAttribute('aria-live', opts.ariaLive);
+
+    host.appendChild(wrap);
+
+    const durationMs = typeof opts.durationMs === 'number' ? opts.durationMs : 3500;
+    window.setTimeout(() => {
+      try {
+        wrap.remove();
+      } catch {
+        // ignore
+      }
+    }, durationMs);
+  }
+
+  function getSelectedReminderSound() {
+    ensureStateShape();
+    const s = state?.meta?.settings;
+    if (!s) return 'bell';
+    const v = s.reminderSound;
+    if (v === 'bell' || v === 'digital' || v === 'soft') return v;
+    return 'bell';
+  }
+
+  function getReminderSoundFromValue(v) {
+    const s = String(v || '');
+    if (s === 'bell' || s === 'digital' || s === 'soft') return s;
+    return 'bell';
+  }
+
+  function setReminderSound(soundValue) {
+    ensureStateShape();
+    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
+    state.meta.settings.reminderSound = getReminderSoundFromValue(soundValue);
+    save();
+  }
+
+  function getReminderSoundUnlockedFlag() {
+    ensureStateShape();
+    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
+    return !!state.meta.settings.reminderAudioUnlocked;
+  }
+
+  function setReminderSoundUnlockedFlag() {
+    ensureStateShape();
+    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
+    state.meta.settings.reminderAudioUnlocked = true;
+    save();
+  }
+
+  function unlockAudioIfNeeded() {
+    // Mobile browsers often require a user gesture before playing audio.
+    if (getReminderSoundUnlockedFlag()) return Promise.resolve(true);
+
+    return new Promise((resolve) => {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return resolve(false);
+        const ctx = new AudioCtx();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = 440;
+        g.gain.value = 0.00001;
+        o.connect(g);
+        g.connect(ctx.destination);
+        const now = ctx.currentTime;
+        g.gain.setValueAtTime(0.00001, now);
+        o.start(now);
+        o.stop(now + 0.03);
+
+        window.setTimeout(() => {
+          try {
+            if (ctx.state === 'running') {
+              setReminderSoundUnlockedFlag();
+              resolve(true);
+            } else {
+              setReminderSoundUnlockedFlag();
+              resolve(true);
+            }
+          } catch {
+            resolve(false);
+          }
+          try {
+            ctx.close && ctx.close();
+          } catch {
+            // ignore
+          }
+        }, 60);
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  function playReminderSound(soundValue) {
+    // Uses actual audio files instead of WebAudio-generated tones.
+    try {
+      const type = getReminderSoundFromValue(soundValue || getSelectedReminderSound());
+
+      // Make audio URLs relative to the current HTML entry (supports index_fixed.html).
+      // If you serve the app from a subpath, this still works.
+      const base = (document?.baseURI || window.location.href).split('?')[0].replace(/\/?$/, '/');
+      const audioRelPrefix = 'sounds/';
+
+      let rel = '';
+      if (type === 'bell') rel = 'bell.mp3';
+      else if (type === 'digital') rel = 'digital-alarm.mp3';
+      else if (type === 'soft') rel = 'notification.mp3';
+      else rel = 'bell.mp3';
+
+
+
+      const audioUrl = new URL(audioRelPrefix + rel, base).toString();
+
+      console.log('[ReminderSound] selected sound:', type);
+      console.log('[ReminderSound] audioUrl:', audioUrl);
+
+      const a = new Audio(audioUrl);
+      a.preload = 'auto';
+
+      a.oncanplaythrough = () => {
+        console.log('[ReminderSound] audio canplaythrough OK:', audioUrl);
+      };
+
+      a.onerror = () => {
+        console.warn('[ReminderSound] audio load FAILED:', audioUrl);
+      };
+
+      // Best-effort cap: stop after 30s.
+      const stopTimer = window.setTimeout(() => {
+        try {
+          a.pause();
+          a.currentTime = 0;
+        } catch {
+          // ignore
+        }
+      }, 30000);
+
+      a.onended = () => {
+        try {
+          clearTimeout(stopTimer);
+        } catch {
+          // ignore
+        }
+      };
+
+      // Unlock is handled by caller (unlockAudioIfNeeded / user gesture)
+      a.play().catch(() => {
+        // ignore play blocking
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  function playSelectedReminderSound() {
+    try {
+      console.log('[ReminderSound] playSelectedReminderSound() called');
+      if (state?.meta?.settings?.sound === false) {
+        console.log('[ReminderSound] sound disabled in settings');
+        return;
+      }
+      const t = getSelectedReminderSound();
+      console.log('[ReminderSound] selected sound:', t);
+
+      unlockAudioIfNeeded()
+        .then((unlocked) => {
+          console.log('[ReminderSound] unlockAudioIfNeeded result:', unlocked);
+          // Ensure we don't call play while locked
+          if (!unlocked) {
+            console.log('[ReminderSound] audio unlock failed; attempting play anyway');
+          }
+          playReminderSound(t);
+        })
+        .catch((e) => {
+          console.log('[ReminderSound] unlockAudioIfNeeded threw', e);
+          playReminderSound(t);
+        });
+    } catch (e) {
+      console.log('[ReminderSound] playSelectedReminderSound() error', e);
+    }
+  }
+
+
+
+  let reminderLastFired = /** @type {Record<string, boolean>} */ ({});
+
+  function shouldFireReminderForHabit(habit, nowDate) {
+    const tNow = currentTimeHHMM(nowDate);
+
+    // reminderTime stored as "HH:MM" (24h)
+    const tHabit = normalizeTimeHHMM(habit?.reminderTime);
+    if (!tHabit) return false;
+    if (tHabit !== tNow) return false;
+
+    const type = habit?.reminderType === 'specific' ? 'specific' : 'daily';
+    if (type === 'daily') return true;
+
+    const label = weekdayLabelForDate(nowDate);
+    const days = Array.isArray(habit?.reminderDays) ? habit.reminderDays : [];
+    return days.includes(label);
+  }
+
+  function reminderFireKey(habitId, dateKey, timeHHMM) {
+    return `${habitId}|${dateKey}|${timeHHMM}`;
+  }
+
+  async function ensureNotificationPermissionOnce() {
+    ensureStateShape();
+    const settings = state.meta.settings;
+    if (!settings) return false;
+    if (settings.notificationPermissionAsked) return true;
+    settings.notificationPermissionAsked = true;
+    save();
+
+    return requestNotificationPermissionOnce();
+  }
+
+  function requestNotificationPermissionOnce() {
+    try {
+      if (!('Notification' in window)) return Promise.resolve(false);
+      if (Notification.permission === 'granted') return Promise.resolve(true);
+      if (Notification.permission === 'denied') return Promise.resolve(false);
+      return Notification.requestPermission().then((p) => p === 'granted').catch(() => false);
+    } catch {
+      return Promise.resolve(false);
+    }
+  }
+
+  function showReminderNotifications(habitName) {
+    const body = `Time for ${habitName}`;
+
+    // Browser notification (best effort)
+    try {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('Habit Reminder', { body });
+      }
+    } catch {
+      // ignore
+    }
+
+    // In-app toast
+    showToast(body, { role: 'status', ariaLive: 'polite' });
+
+    // Sound
+    try {
+      // respect setting
+      if (state?.meta?.settings?.sound !== false) {
+        playSelectedReminderSound();
+      }
+
+    } catch {
+      // ignore
+    }
+  }
+
+  function minuteReminderTick() {
+    const now = new Date();
+    const dateKey = todayKey(now);
+    const tNow = currentTimeHHMM(now);
+
+    try {
+      // Don’t request permission on every tick.
+      // Only request if user hasn’t asked yet.
+      const settings = state?.meta?.settings;
+      if (settings && !settings.notificationPermissionAsked) {
+        // user-gesture-safe assumption: still best-effort; will silently fail if blocked
+        ensureNotificationPermissionOnce().catch(() => {});
+      }
+
+      for (const habit of state.habits || []) {
+        if (!habit) continue;
+        const fireKey = reminderFireKey(habit.id, dateKey, tNow);
+        if (reminderLastFired[fireKey]) continue;
+
+        if (!shouldFireReminderForHabit(habit, now)) continue;
+
+        reminderLastFired[fireKey] = true;
+        showReminderNotifications(habit.name);
+      }
+    } catch {
+      // ignore
+    }
+
+    // clean small cache occasionally
+    if (Object.keys(reminderLastFired).length > 2000) {
+      reminderLastFired = {};
+    }
+  }
+
+  function startMinuteReminderLoop() {
+    // Avoid starting multiple loops across hot reload / re-init.
+    if (startMinuteReminderLoop._started) return;
+    startMinuteReminderLoop._started = true;
+
+    // Align to the next minute boundary, then run every 60s.
+    let first = true;
+    const schedule = () => {
+      const now = new Date();
+      const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+      window.setTimeout(() => {
+        if (first) {
+          first = false;
+        }
+        minuteReminderTick();
+        window.setInterval(minuteReminderTick, 60000);
+      }, Math.max(0, msToNextMinute));
+    };
+    schedule();
+  }
+
+
+
   function openTrashConfirmModal(els, habitId, habitName) {
     ensureStateShape();
     state._pendingTrashDelete = { habitId, habitName: habitName || (state.habits.find((h) => h.id === habitId)?.name || ''), snapshot: null };
@@ -1048,9 +1718,39 @@
   }
 
 
-  function addHabit({ name, targetDays }) {
+  function addHabit({ name, targetDays, reminderTime, reminderType, reminderDays }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
-    state.habits.unshift({ id, name, targetDays, createdAt: Date.now(), history: {} });
+
+    // Ensure reminderTime is stored as "HH:MM" (24h) string for reminder matching.
+    // Supports both:
+    // - reminderTime passed as a ready string
+    // - reminderTime passed as a structured {hour, minute, ampm} object
+    let normalizedReminderTime = '';
+    if (typeof reminderTime === 'string') {
+      normalizedReminderTime = reminderTime;
+    } else if (reminderTime && typeof reminderTime === 'object') {
+      try {
+        const hh = reminderTime.hour;
+        const mm = reminderTime.minute;
+        const ap = reminderTime.ampm;
+        const hhmm = normalizeTime12PartsToHHMM(hh, mm, ap);
+        normalizedReminderTime = hhmm || '';
+      } catch {
+        normalizedReminderTime = '';
+      }
+    }
+
+    state.habits.unshift({
+      id,
+      name,
+      targetDays,
+      createdAt: Date.now(),
+      history: {},
+      reminderTime: typeof normalizedReminderTime === 'string' ? normalizedReminderTime : '',
+      reminderType: reminderType === 'specific' ? 'specific' : 'daily',
+      reminderDays: Array.isArray(reminderDays) ? reminderDays : [],
+    });
+
 
     state.xp = state.xp || {};
     if (typeof state.xp.total !== 'number') state.xp.total = 0;
@@ -1095,6 +1795,47 @@
   }
 
   function bindEvents(els) {
+    // Notification permission only once (safe flag)
+    // Reminder Sound Test wiring
+    els.testReminderSoundBtn && els.testReminderSoundBtn.addEventListener('click', () => {
+      console.log('[ReminderSound] Test button clicked');
+      try {
+        if (state?.meta?.settings?.sound === false) {
+          console.log('[ReminderSound] sound disabled in settings');
+          return;
+        }
+        const t = getSelectedReminderSound();
+        console.log('[ReminderSound] Test selected sound:', t);
+        unlockAudioIfNeeded()
+          .then((unlocked) => {
+            console.log('[ReminderSound] Test unlockAudioIfNeeded result:', unlocked);
+            if (!unlocked) console.log('[ReminderSound] Test audio unlock failed; still attempting play');
+            playReminderSound(t);
+          })
+          .catch((e) => {
+            console.log('[ReminderSound] Test unlockAudioIfNeeded threw', e);
+            playReminderSound(t);
+          });
+      } catch (e) {
+        console.log('[ReminderSound] Test sound error', e);
+      }
+    });
+
+    try {
+      ensureStateShape();
+      const settings = state.meta.settings || (state.meta.settings = { reducedMotion: false, sound: true });
+      if (!settings.notificationPermissionAsked) {
+        settings.notificationPermissionAsked = true;
+        requestNotificationPermissionOnce().catch(() => {
+          // ignore
+        });
+        save();
+      }
+    } catch {
+      // ignore
+    }
+
+
     els.openTrashBtn && els.openTrashBtn.addEventListener('click', () => {
       state._dirtyViews = state._dirtyViews || {};
       state._dirtyViews.trash = true;
@@ -1150,10 +1891,56 @@
         const name = els.habitNameInput ? els.habitNameInput.value.trim() : '';
         const targetDays = safeNumber(els.habitTargetInput?.value, 7);
         if (!name) return;
-        addHabit({ name, targetDays: Math.max(1, Math.min(7, targetDays)) });
+
+        // Reminder time UI is split into hour/minute/AMPM in index_fixed.html
+        // Build normalized HH:MM (24h) string for reminder matching.
+        let reminderTime = '';
+        try {
+          const hourStr = els.habitReminderHourInput ? String(els.habitReminderHourInput.value || '').trim() : '';
+          const minuteStr = els.habitReminderMinuteInput ? String(els.habitReminderMinuteInput.value || '').trim() : '';
+          const ampm = els.habitReminderAmPmInput ? String(els.habitReminderAmPmInput.value || '').trim() : '';
+          if (hourStr && minuteStr && ampm) {
+            reminderTime = normalizeTime12PartsToHHMM(hourStr, minuteStr, ampm);
+          }
+        } catch {
+          reminderTime = '';
+        }
+
+        const reminderType = els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked ? 'specific' : 'daily';
+
+        let reminderDays = [];
+        if (reminderType === 'specific' && els.habitReminderDaysWrap) {
+          reminderDays = Array.from(els.habitReminderDaysWrap.querySelectorAll('input[type="checkbox"]'))
+            .filter((cb) => cb.checked)
+            .map((cb) => cb.dataset.day)
+            .filter(Boolean);
+        }
+
+        addHabit({
+          name,
+          targetDays: Math.max(1, Math.min(7, targetDays)),
+          reminderTime,
+          reminderType,
+          reminderDays,
+        });
+
         closeModal(els);
         renderDashboard(els);
       });
+
+    // Reminder UI show/hide (Specific Days)
+    els.habitReminderTypeDailyInput &&
+      els.habitReminderTypeDailyInput.addEventListener('change', () => {
+        if (!els.habitReminderDaysWrap) return;
+        els.habitReminderDaysWrap.style.display = 'none';
+      });
+
+    els.habitReminderTypeSpecificInput &&
+      els.habitReminderTypeSpecificInput.addEventListener('change', () => {
+        if (!els.habitReminderDaysWrap) return;
+        els.habitReminderDaysWrap.style.display = 'block';
+      });
+
 
     els.clearWeekBtn && els.clearWeekBtn.addEventListener('click', () => clearWeek(els));
 
@@ -1294,11 +2081,23 @@
     els.habitModal.setAttribute('aria-hidden', 'true');
     if (els.habitForm) els.habitForm.reset();
     if (els.habitTargetInput) els.habitTargetInput.value = 7;
+
+    // Reset reminder inputs (best-effort)
+    if (els.habitReminderTimeInput) els.habitReminderTimeInput.value = '';
+    if (els.habitReminderTypeDailyInput) els.habitReminderTypeDailyInput.checked = true;
+    if (els.habitReminderDaysWrap) {
+      const cbs = els.habitReminderDaysWrap.querySelectorAll('input[type="checkbox"]');
+      cbs.forEach((cb) => (cb.checked = false));
+      els.habitReminderDaysWrap.style.display = 'none';
+    }
   }
+
 
   function init() {
     const els = {
       navItems: Array.from(document.querySelectorAll('.nav-item')),
+
+
 
       mobileNav: $('mobileNav'),
       menuBtn: $('menuBtn'),
@@ -1338,6 +2137,10 @@
       habitForm: $('habitForm'),
       habitNameInput: $('habitNameInput'),
       habitTargetInput: $('habitTargetInput'),
+      habitReminderTimeInput: $('habitReminderTimeInput'),
+      habitReminderTypeDailyInput: $('habitReminderTypeDailyInput'),
+      habitReminderTypeSpecificInput: $('habitReminderTypeSpecificInput'),
+      habitReminderDaysWrap: $('habitReminderDaysWrap'),
       closeModalBtn: $('closeModalBtn'),
       cancelModalBtn: $('cancelModalBtn'),
       newHabitBtn: $('newHabitBtn'),
@@ -1396,6 +2199,13 @@
     state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true, trash: true };
 
     load();
+
+    // Start reminder loop after we have loaded/migrated state.
+    try {
+      startMinuteReminderLoop();
+    } catch {
+      // ignore
+    }
 
     els.currentView = 'dashboard';
     showView('dashboard', els);
