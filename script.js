@@ -913,273 +913,6 @@
 
   const REMINDER_WEEKDAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 
-  function setReminderSound(soundValue) {
-    ensureStateShape();
-    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
-    state.meta.settings.reminderSound = getReminderSoundFromValue(soundValue);
-    save();
-  }
-
-  // -----------------------------
-  // Custom Reminder Sound (offline via IndexedDB)
-  // -----------------------------
-
-
-  const CUSTOM_SOUND_DB_NAME = 'habitTrackerReminderAudioDB';
-  const CUSTOM_SOUND_DB_VERSION = 1;
-  const CUSTOM_SOUND_STORE = 'audioBlobs';
-
-  /** @type {IDBDatabase | null} */
-  let customSoundDb = null;
-
-  function openCustomSoundDb() {
-    return new Promise((resolve) => {
-      try {
-        if (customSoundDb) return resolve(customSoundDb);
-        const req = indexedDB.open(CUSTOM_SOUND_DB_NAME, CUSTOM_SOUND_DB_VERSION);
-        req.onupgradeneeded = () => {
-          const db = req.result;
-          if (!db.objectStoreNames.contains(CUSTOM_SOUND_STORE)) {
-            db.createObjectStore(CUSTOM_SOUND_STORE, { keyPath: 'key' });
-          }
-        };
-        req.onsuccess = () => {
-          customSoundDb = req.result;
-          resolve(customSoundDb);
-        };
-        req.onerror = () => resolve(null);
-      } catch {
-        resolve(null);
-      }
-    });
-  }
-
-  async function saveCustomSoundToIndexedDB({ key, blob, fileName }) {
-    const db = await openCustomSoundDb();
-    if (!db) return false;
-
-    return new Promise((resolve) => {
-      try {
-        const tx = db.transaction([CUSTOM_SOUND_STORE], 'readwrite');
-        const store = tx.objectStore(CUSTOM_SOUND_STORE);
-        store.put({ key, blob, fileName: String(fileName || '') });
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => resolve(false);
-      } catch {
-        resolve(false);
-      }
-    });
-  }
-
-  async function deleteCustomSoundFromIndexedDB(key) {
-    const db = await openCustomSoundDb();
-    if (!db) return false;
-
-    return new Promise((resolve) => {
-      try {
-        const tx = db.transaction([CUSTOM_SOUND_STORE], 'readwrite');
-        const store = tx.objectStore(CUSTOM_SOUND_STORE);
-        store.delete(key);
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => resolve(false);
-      } catch {
-        resolve(false);
-      }
-    });
-  }
-
-  async function loadCustomSoundFromIndexedDB(key) {
-    const db = await openCustomSoundDb();
-    if (!db) return null;
-
-    return new Promise((resolve) => {
-      try {
-        const tx = db.transaction([CUSTOM_SOUND_STORE], 'readonly');
-        const store = tx.objectStore(CUSTOM_SOUND_STORE);
-        const req = store.get(key);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => resolve(null);
-      } catch {
-        resolve(null);
-      }
-    });
-  }
-
-  /** @type {{ blob: Blob, fileName: string } | null} */
-  let customSoundCache = null;
-  /** @type {string | null} */
-  let customSoundObjectUrl = null;
-
-  function getCustomSoundFromState() {
-    ensureStateShape();
-    const s = state.meta.settings || (state.meta.settings = { reducedMotion: false, sound: true });
-    return {
-      selected: s.reminderSound === 'custom',
-      customSet: !!s.customSoundSet,
-    };
-  }
-
-  function getCustomSoundFileNameSafe() {
-    ensureStateShape();
-    const s = state.meta.settings || {};
-    if (typeof s.customSoundFileName === 'string' && s.customSoundFileName.trim()) return s.customSoundFileName;
-    return '';
-  }
-
-  function setCustomSoundSelected(selected) {
-    ensureStateShape();
-    state.meta.settings = state.meta.settings || { reducedMotion: false, sound: true };
-    state.meta.settings.reminderSound = selected ? 'custom' : 'bell';
-    save();
-  }
-
-  async function ensureCustomSoundLoaded() {
-    try {
-      if (customSoundCache?.blob) return customSoundCache;
-      const rec = await loadCustomSoundFromIndexedDB('custom');
-      if (!rec?.blob) return null;
-      customSoundCache = { blob: rec.blob, fileName: rec.fileName || '' };
-      return customSoundCache;
-    } catch {
-      return null;
-    }
-  }
-
-  function cleanupCustomSoundObjectUrl() {
-    try {
-      if (customSoundObjectUrl) {
-        URL.revokeObjectURL(customSoundObjectUrl);
-      }
-    } catch {
-      // ignore
-    } finally {
-      customSoundObjectUrl = null;
-    }
-  }
-
-  // Play either custom audio (if selected) or built-in WebAudio sounds.
-  // Enforces max playback duration of 30 seconds.
-  async function playReminderSoundSafe() {
-    try {
-      if (state?.meta?.settings?.sound === false) return;
-
-      const s = state?.meta?.settings || {};
-      const selected = s.reminderSound === 'custom';
-
-      if (selected) {
-        const cache = await ensureCustomSoundLoaded();
-        if (!cache?.blob) {
-          console.warn('[CustomSound] selected but no custom audio loaded; falling back');
-          playReminderSound(getSelectedReminderSound());
-          return;
-        }
-
-        cleanupCustomSoundObjectUrl();
-        const url = URL.createObjectURL(cache.blob);
-        customSoundObjectUrl = url;
-
-        const a = new Audio(url);
-        a.preload = 'auto';
-
-        let stopped = false;
-        const stopTimer = window.setTimeout(() => {
-          if (stopped) return;
-          stopped = true;
-          try {
-            a.pause();
-            a.currentTime = 0;
-          } catch {
-            // ignore
-          }
-        }, 30000);
-
-        a.onerror = () => {
-          try {
-            clearTimeout(stopTimer);
-          } catch {
-            // ignore
-          }
-          console.warn('[CustomSound] audio error; falling back');
-          try {
-            playReminderSound('bell');
-          } catch {
-            // ignore
-          }
-        };
-
-        try {
-          await unlockAudioIfNeeded();
-        } catch {
-          // ignore
-        }
-
-        try {
-          await a.play();
-        } catch {
-          clearTimeout(stopTimer);
-          console.warn('[CustomSound] play blocked; falling back');
-          playReminderSound('bell');
-          return;
-        }
-
-        a.onended = () => {
-          if (stopped) return;
-          stopped = true;
-          clearTimeout(stopTimer);
-          cleanupCustomSoundObjectUrl();
-        };
-
-        a.onpause = () => {
-          if (!stopped) return;
-          cleanupCustomSoundObjectUrl();
-        };
-
-        return;
-      }
-
-      // built-in
-      playReminderSound();
-    } catch {
-      // ignore and last-resort fallback
-      try {
-        playReminderSound();
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-
-
-  // Preserve existing reminder code but ensure custom sound option routes through playReminderSoundSafe
-  // IMPORTANT: custom selected sound routing
-  // (Built-in reminder sound implementation below will call playSelectedReminderSound().)
-  function playSelectedReminderSound() {
-    try {
-      console.log('[ReminderSound] playSelectedReminderSound() called');
-      if (state?.meta?.settings?.sound === false) return;
-
-      const t = getSelectedReminderSound();
-      if (t === 'custom') {
-        playReminderSoundSafe();
-        return;
-      }
-
-      unlockAudioIfNeeded()
-        .then(() => playReminderSound(t))
-        .catch(() => playReminderSound(t));
-    } catch {
-      // ignore
-    }
-  }
-
-
-  // -----------------------------
-  // Existing built-in reminder sound implementation (kept)
-  // -----------------------------
-
-
-
   function weekdayLabelForDate(d) {
     const day = d.getDay(); // 0=Sun
     const map = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -1345,61 +1078,99 @@
   }
 
   function playReminderSound(soundValue) {
-    // Uses actual audio files instead of WebAudio-generated tones.
+    // Plays a built-in sound using WebAudio. No external files.
     try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+
+      const ctx = new AudioCtx();
+      const master = ctx.createGain();
+      master.gain.value = 0.00001;
+      master.connect(ctx.destination);
+
       const type = getReminderSoundFromValue(soundValue || getSelectedReminderSound());
+      const now = ctx.currentTime;
 
-      // Make audio URLs relative to the current HTML entry (supports index_fixed.html).
-      // If you serve the app from a subpath, this still works.
-      const base = (document?.baseURI || window.location.href).split('?')[0].replace(/\/?$/, '/');
-      const audioRelPrefix = 'sounds/';
+      function envelope(attackMs, peak, decayMs) {
+        master.gain.setValueAtTime(0.00001, now);
+        master.gain.exponentialRampToValueAtTime(Math.max(0.00002, peak), now + attackMs / 1000);
+        master.gain.exponentialRampToValueAtTime(0.00001, now + decayMs / 1000);
+      }
 
-      let rel = '';
-      if (type === 'bell') rel = 'bell.mp3';
-      else if (type === 'digital') rel = 'digital-alarm.mp3';
-      else if (type === 'soft') rel = 'notification.mp3';
-      else rel = 'bell.mp3';
+      if (type === 'bell') {
+        // Classic bell: 2 quick partials with exponential decay.
+        envelope(8, 0.25, 420);
 
+        const freqs = [880, 1320];
+        const gains = [0.55, 0.35];
+        const oscs = freqs.map((f, i) => {
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.type = 'sine';
+          o.frequency.value = f;
+          g.gain.value = 0.00001;
+          o.connect(g);
+          g.connect(master);
 
+          const start = now;
+          const dur = 0.48;
+          g.gain.setValueAtTime(0.00001, start);
+          g.gain.exponentialRampToValueAtTime(0.2 * gains[i], start + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.00001, start + dur);
 
-      const audioUrl = new URL(audioRelPrefix + rel, base).toString();
+          o.start(start);
+          o.stop(start + dur + 0.02);
+          return o;
+        });
+      } else if (type === 'digital') {
+        // Digital alarm: short beeps pattern.
+        // 3 beeps spaced closely.
+        const beep = (t, f) => {
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.type = 'square';
+          o.frequency.value = f;
+          g.gain.value = 0.00001;
+          o.connect(g);
+          g.connect(master);
+          g.gain.setValueAtTime(0.00001, t);
+          g.gain.exponentialRampToValueAtTime(0.35, t + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.00001, t + 0.10);
+          o.start(t);
+          o.stop(t + 0.12);
+        };
 
-      console.log('[ReminderSound] selected sound:', type);
-      console.log('[ReminderSound] audioUrl:', audioUrl);
+        envelope(5, 0.18, 380);
+        beep(now + 0.00, 988);
+        beep(now + 0.15, 1175);
+        beep(now + 0.30, 988);
+      } else {
+        // Soft notification: gentle triangle tone.
+        envelope(12, 0.12, 520);
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'triangle';
+        o.frequency.value = 660;
+        g.gain.value = 0.00001;
+        o.connect(g);
+        g.connect(master);
 
-      const a = new Audio(audioUrl);
-      a.preload = 'auto';
+        g.gain.setValueAtTime(0.00001, now);
+        g.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.00001, now + 0.55);
 
-      a.oncanplaythrough = () => {
-        console.log('[ReminderSound] audio canplaythrough OK:', audioUrl);
-      };
+        o.start(now);
+        o.stop(now + 0.58);
+      }
 
-      a.onerror = () => {
-        console.warn('[ReminderSound] audio load FAILED:', audioUrl);
-      };
-
-      // Best-effort cap: stop after 30s.
-      const stopTimer = window.setTimeout(() => {
+      // Close after playback.
+      window.setTimeout(() => {
         try {
-          a.pause();
-          a.currentTime = 0;
+          ctx.close && ctx.close();
         } catch {
           // ignore
         }
-      }, 30000);
-
-      a.onended = () => {
-        try {
-          clearTimeout(stopTimer);
-        } catch {
-          // ignore
-        }
-      };
-
-      // Unlock is handled by caller (unlockAudioIfNeeded / user gesture)
-      a.play().catch(() => {
-        // ignore play blocking
-      });
+      }, 900);
     } catch {
       // ignore
     }
@@ -1439,8 +1210,6 @@
 
   function shouldFireReminderForHabit(habit, nowDate) {
     const tNow = currentTimeHHMM(nowDate);
-
-    // reminderTime stored as "HH:MM" (24h)
     const tHabit = normalizeTimeHHMM(habit?.reminderTime);
     if (!tHabit) return false;
     if (tHabit !== tNow) return false;
@@ -1497,10 +1266,7 @@
     // Sound
     try {
       // respect setting
-      if (state?.meta?.settings?.sound !== false) {
-        playSelectedReminderSound();
-      }
-
+      if (state?.meta?.settings?.sound !== false) playReminderSound();
     } catch {
       // ignore
     }
@@ -1720,33 +1486,13 @@
 
   function addHabit({ name, targetDays, reminderTime, reminderType, reminderDays }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
-
-    // Ensure reminderTime is stored as "HH:MM" (24h) string for reminder matching.
-    // Supports both:
-    // - reminderTime passed as a ready string
-    // - reminderTime passed as a structured {hour, minute, ampm} object
-    let normalizedReminderTime = '';
-    if (typeof reminderTime === 'string') {
-      normalizedReminderTime = reminderTime;
-    } else if (reminderTime && typeof reminderTime === 'object') {
-      try {
-        const hh = reminderTime.hour;
-        const mm = reminderTime.minute;
-        const ap = reminderTime.ampm;
-        const hhmm = normalizeTime12PartsToHHMM(hh, mm, ap);
-        normalizedReminderTime = hhmm || '';
-      } catch {
-        normalizedReminderTime = '';
-      }
-    }
-
     state.habits.unshift({
       id,
       name,
       targetDays,
       createdAt: Date.now(),
       history: {},
-      reminderTime: typeof normalizedReminderTime === 'string' ? normalizedReminderTime : '',
+      reminderTime: typeof reminderTime === 'string' ? reminderTime : '',
       reminderType: reminderType === 'specific' ? 'specific' : 'daily',
       reminderDays: Array.isArray(reminderDays) ? reminderDays : [],
     });
@@ -1892,20 +1638,7 @@
         const targetDays = safeNumber(els.habitTargetInput?.value, 7);
         if (!name) return;
 
-        // Reminder time UI is split into hour/minute/AMPM in index_fixed.html
-        // Build normalized HH:MM (24h) string for reminder matching.
-        let reminderTime = '';
-        try {
-          const hourStr = els.habitReminderHourInput ? String(els.habitReminderHourInput.value || '').trim() : '';
-          const minuteStr = els.habitReminderMinuteInput ? String(els.habitReminderMinuteInput.value || '').trim() : '';
-          const ampm = els.habitReminderAmPmInput ? String(els.habitReminderAmPmInput.value || '').trim() : '';
-          if (hourStr && minuteStr && ampm) {
-            reminderTime = normalizeTime12PartsToHHMM(hourStr, minuteStr, ampm);
-          }
-        } catch {
-          reminderTime = '';
-        }
-
+        const reminderTime = els.habitReminderTimeInput ? String(els.habitReminderTimeInput.value || '').trim() : '';
         const reminderType = els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked ? 'specific' : 'daily';
 
         let reminderDays = [];
