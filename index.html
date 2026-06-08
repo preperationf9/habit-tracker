@@ -359,10 +359,34 @@
     </div>
   </section>
 
+  <!-- Alarm Modal (STOP / SNOOZE) -->
+  <div class="modal" id="alarmModal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Reminder</div>
+          <div class="modal-sub" id="alarmHabitName">Time to complete your habit.</div>
+        </div>
+        <button class="icon-btn" id="alarmModalCloseBtn" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body" style="gap:12px;">
+        <div style="color:rgba(232,238,252,.9);font-weight:900;">Time to complete your habit: <span id="alarmHabitNameInline">—</span></div>
+      </div>
+
+        <div class="modal-actions">
+          <button class="ghost-btn" id="alarmStopBtn" type="button">STOP</button>
+          <button class="glow-btn" id="alarmSnoozeBtn" type="button">SNOOZE (5 min)</button>
+        </div>
+
+    </div>
+  </div>
+
   <!-- Add Habit Modal -->
   <div class="modal" id="habitModal" aria-hidden="true" role="dialog" aria-modal="true">
 
     <div class="modal-card">
+
       <div class="modal-head">
         <div>
           <div class="modal-title">Add a new habit</div>
@@ -385,89 +409,25 @@
         <div class="field" style="margin-top:10px;">
           <span class="field-label">Reminder Time</span>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <select id="habitReminderHourInput" aria-label="Reminder hour" style="min-width:88px;">
-              <option value="">Hour</option>
-              <option value="1">1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-              <option value="5">5</option>
-              <option value="6">6</option>
-              <option value="7">7</option>
-              <option value="8">8</option>
-              <option value="9">9</option>
-              <option value="10">10</option>
-              <option value="11">11</option>
-              <option value="12">12</option>
-            </select>
-            <select id="habitReminderMinuteInput" aria-label="Reminder minute" style="min-width:88px;">
-              <option value="">Min</option>
-              <option value="0">00</option>
-              <option value="1">01</option>
-              <option value="2">02</option>
-              <option value="3">03</option>
-              <option value="4">04</option>
-              <option value="5">05</option>
-              <option value="6">06</option>
-              <option value="7">07</option>
-              <option value="8">08</option>
-              <option value="9">09</option>
-              <option value="10">10</option>
-              <option value="11">11</option>
-              <option value="12">12</option>
-              <option value="13">13</option>
-              <option value="14">14</option>
-              <option value="15">15</option>
-              <option value="16">16</option>
-              <option value="17">17</option>
-              <option value="18">18</option>
-              <option value="19">19</option>
-              <option value="20">20</option>
-              <option value="21">21</option>
-              <option value="22">22</option>
-              <option value="23">23</option>
-              <option value="24">24</option>
-              <option value="25">25</option>
-              <option value="26">26</option>
-              <option value="27">27</option>
-              <option value="28">28</option>
-              <option value="29">29</option>
-              <option value="30">30</option>
-              <option value="31">31</option>
-              <option value="32">32</option>
-              <option value="33">33</option>
-              <option value="34">34</option>
-              <option value="35">35</option>
-              <option value="36">36</option>
-              <option value="37">37</option>
-              <option value="38">38</option>
-              <option value="39">39</option>
-              <option value="40">40</option>
-              <option value="41">41</option>
-              <option value="42">42</option>
-              <option value="43">43</option>
-              <option value="44">44</option>
-              <option value="45">45</option>
-              <option value="46">46</option>
-              <option value="47">47</option>
-              <option value="48">48</option>
-              <option value="49">49</option>
-              <option value="50">50</option>
-              <option value="51">51</option>
-              <option value="52">52</option>
-              <option value="53">53</option>
-              <option value="54">54</option>
-              <option value="55">55</option>
-              <option value="56">56</option>
-              <option value="57">57</option>
-              <option value="58">58</option>
-              <option value="59">59</option>
-            </select>
-            <select id="habitReminderAmPmInput" aria-label="Reminder AM/PM" style="min-width:88px;">
-              <option value="">AM/PM</option>
-              <option value="AM">AM</option>
-              <option value="PM">PM</option>
-            </select>
+
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+              <button type="button" class="ghost-btn" id="habitReminderTimeButton" style="min-height:44px;display:flex;align-items:center;justify-content:center;gap:10px;">
+                <span aria-hidden="true">🕒</span>
+                <span id="habitReminderTimeButtonText">Set reminder time</span>
+              </button>
+              <input type="hidden" id="habitReminderTimeInput" />
+            </div>
+          </div>
+        </div>
+
+
+        <div class="field" style="margin-top:10px;">
+          <span class="field-label">Alarm Sound</span>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound1" value="1" checked /> <span>Alarm 1</span></label>
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound2" value="2" /> <span>Alarm 2</span></label>
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound3" value="3" /> <span>Alarm 3</span></label>
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound4" value="4" /> <span>Alarm 4</span></label>
           </div>
         </div>
 
@@ -475,6 +435,7 @@
           <legend class="field-label" style="padding:0;margin:0;">Reminder Type</legend>
 
           <label style="display:flex;gap:10px;align-items:center;margin:8px 0;">
+
             <input type="radio" name="habitReminderType" id="habitReminderTypeDailyInput" value="daily" checked />
             <span>Daily</span>
           </label>

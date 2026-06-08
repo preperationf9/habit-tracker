@@ -341,9 +341,33 @@
     </div>
   </section>
 
+  <!-- Alarm Modal (STOP / SNOOZE) -->
+  <div class="modal" id="alarmModal" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Reminder</div>
+          <div class="modal-sub" id="alarmHabitName">Time to complete your habit.</div>
+        </div>
+        <button class="icon-btn" id="alarmModalCloseBtn" type="button" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body" style="gap:12px;">
+        <div style="color:rgba(232,238,252,.9);font-weight:900;">Time to complete your habit: <span id="alarmHabitNameInline">—</span></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="ghost-btn" id="alarmStopBtn" type="button">STOP</button>
+        <button class="glow-btn" id="alarmSnoozeBtn" type="button">SNOOZE (5 min)</button>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Add Habit Modal -->
   <div class="modal" id="habitModal" aria-hidden="true" role="dialog" aria-modal="true">
     <div class="modal-card">
+
       <div class="modal-head">
         <div>
           <div class="modal-title">Add a new habit</div>
@@ -452,10 +476,21 @@
           </div>
         </div>
 
+        <div class="field" style="margin-top:10px;">
+          <span class="field-label">Alarm Sound</span>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound1" value="1" checked /> <span>Alarm 1</span></label>
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound2" value="2" /> <span>Alarm 2</span></label>
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound3" value="3" /> <span>Alarm 3</span></label>
+            <label style="display:flex;gap:8px;align-items:center;"><input type="radio" name="alarmSound" id="habitAlarmSound4" value="4" /> <span>Alarm 4</span></label>
+          </div>
+        </div>
+
         <fieldset class="field" style="border:0;padding:0;margin:12px 0 0;">
           <legend class="field-label" style="padding:0;margin:0;">Reminder Type</legend>
 
           <label style="display:flex;gap:10px;align-items:center;margin:8px 0;">
+
             <input type="radio" name="habitReminderType" id="habitReminderTypeDailyInput" value="daily" checked />
             <span>Daily</span>
           </label>

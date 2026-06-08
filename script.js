@@ -907,7 +907,345 @@
 
   function renderSettings() {}
 
-  // Reminder/Alarm feature removed (audio & notifications disabled)
+  // ==============================
+  // Alarm Reminder (additive)
+  // ==============================
+
+  const ALARM_DEFAULT_SOUND = 1;
+  const ALARM_SNOOZE_MINUTES = 5;
+  const ALARM_CHECK_MS = 10 * 1000;
+
+  function allowedReminderDayLabels() {
+    return new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
+  }
+
+  function getHabitReminderDays(habit) {
+    const allowed = allowedReminderDayLabels();
+    if (!habit || habit.reminderType !== 'specific') return [];
+    if (!Array.isArray(habit.reminderDays)) return [];
+    return habit.reminderDays.filter((d) => typeof d === 'string' && allowed.has(d));
+  }
+
+  function dayLabelForDate(dateObj) {
+    const labels = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return labels[dateObj.getDay()];
+  }
+
+  function parseReminderTimeToTodayDate(reminderTime, ampm) {
+    // reminderTime is typically stored as "HH:MM" in 24h format.
+    if (typeof reminderTime !== 'string' || !reminderTime.includes(':')) return null;
+
+    const [hRaw, mRaw] = reminderTime.split(':');
+    const h = safeNumber(hRaw, NaN);
+    const m = safeNumber(mRaw, NaN);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+
+    // If ampm is not provided, treat the value as 24h.
+    let hour = Math.max(0, Math.min(23, h));
+
+    if (ampm === 'AM' || ampm === 'PM') {
+      // Convert 12h -> 24h. Input hour comes from UI 1..12.
+      const isPM = ampm === 'PM';
+      hour = Math.max(1, Math.min(12, hour));
+      if (isPM && hour !== 12) hour += 12;
+      if (!isPM && hour === 12) hour = 0;
+    }
+
+    const now = new Date();
+    now.setHours(hour, m, 0, 0);
+    return now;
+  }
+
+
+  function getAlarmSoundForHabit(habit) {
+    const v = Number(habit?.alarmSound ?? habit?.reminderSound ?? ALARM_DEFAULT_SOUND);
+    const n = Number.isFinite(v) ? v : ALARM_DEFAULT_SOUND;
+    return Math.max(1, Math.min(4, n));
+  }
+
+  function getSelectedAlarmSoundUrl(habit) {
+    const n = getAlarmSoundForHabit(habit);
+    return `sounds/alarm${n}.mp3`;
+  }
+
+  function formatAlarmMessage(habit) {
+    const name = habit?.name || 'your habit';
+    return `Time to complete your habit: ${name}`;
+  }
+
+  function ensureAlarmState() {
+    ensureStateShape();
+    state.meta.alarm = state.meta.alarm && typeof state.meta.alarm === 'object' ? state.meta.alarm : {};
+    state.meta.alarm.silencedUntilByHabit = state.meta.alarm.silencedUntilByHabit && typeof state.meta.alarm.silencedUntilByHabit === 'object' ? state.meta.alarm.silencedUntilByHabit : {};
+    state.meta.alarm.lastTriggeredAtByHabit = state.meta.alarm.lastTriggeredAtByHabit && typeof state.meta.alarm.lastTriggeredAtByHabit === 'object' ? state.meta.alarm.lastTriggeredAtByHabit : {};
+  }
+
+  function unlockAudioIfNeeded() {
+    // Best-effort unlock for mobile/Android WebView.
+    return new Promise((resolve) => {
+      try {
+        const a = new Audio();
+        const t = setTimeout(() => resolve(false), 1200);
+        const onAny = () => {
+          clearTimeout(t);
+          resolve(true);
+        };
+        a.muted = true;
+        a.volume = 0;
+        a.play().then(onAny).catch(() => {
+          clearTimeout(t);
+          resolve(false);
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  function playReminderSound(url, { loop = true } = {}) {
+    try {
+      // Make sure only one sound plays at a time.
+      stopReminderSound();
+
+      // Respect settings toggle
+      if (state?.meta?.settings && state.meta.settings.sound === false) return;
+
+      unlockAudioIfNeeded().catch(() => {});
+      const a = new Audio(url);
+      a.loop = loop;
+
+      a.volume = 1;
+      a.muted = false;
+
+      // Autoplay restrictions: attempt play from user gesture when possible.
+      a.play().catch(() => {});
+
+      state.meta.alarm = state.meta.alarm || {};
+      state.meta.alarm._activeAudio = a;
+    } catch {
+      // ignore
+    }
+  }
+
+
+
+  function stopReminderSound() {
+    try {
+      const a = state?.meta?.alarm?._activeAudio;
+      if (a && typeof a.pause === 'function') {
+        a.pause();
+        a.currentTime = 0;
+      }
+    } catch {
+      // ignore
+    }
+    if (state?.meta?.alarm) state.meta.alarm._activeAudio = null;
+  }
+
+  function isHabitScheduledToday(habit, now) {
+    if (!habit?.reminderTime) return false;
+    // reminderType controls whether specific days are active.
+    if (habit.reminderType !== 'specific') return true;
+    const label = dayLabelForDate(now);
+    const days = getHabitReminderDays(habit);
+    return days.includes(label);
+  }
+
+  function computeHabitReminderDateTime(habit) {
+    const reminderTime = habit?.reminderTime;
+    const reminderDate = parseReminderTimeToTodayDate(reminderTime, null);
+    if (!reminderDate) return null;
+    if (!isHabitScheduledToday(habit, reminderDate)) return null;
+    return reminderDate;
+  }
+
+
+  function getSilencedUntilForHabit(habitId) {
+    ensureAlarmState();
+    return state.meta.alarm.silencedUntilByHabit[habitId] || 0;
+  }
+
+  function setSilencedUntilForHabit(habitId, ts) {
+    ensureAlarmState();
+    state.meta.alarm.silencedUntilByHabit[habitId] = ts;
+    save();
+  }
+
+  function setLastTriggeredForHabit(habitId, ts) {
+    ensureAlarmState();
+    state.meta.alarm.lastTriggeredAtByHabit[habitId] = ts;
+    save();
+  }
+
+  function shouldTriggerHabitNow(habit, now) {
+    const reminderDate = computeHabitReminderDateTime(habit);
+    if (!reminderDate) return false;
+
+    const silencedUntil = getSilencedUntilForHabit(habit.id);
+    if (now.getTime() < silencedUntil) return false;
+
+    // Trigger when within the same minute.
+    const diffMs = Math.abs(now.getTime() - reminderDate.getTime());
+    return diffMs <= ALARM_CHECK_MS;
+  }
+
+  function getAlarmSoundLabel(n) {
+    return `Alarm ${n}`;
+  }
+
+  function showAlarmModal(els, habit) {
+    if (!els.alarmModal) return;
+
+    const habitName = habit?.name || '—';
+    const soundN = getAlarmSoundForHabit(habit);
+
+    // modal-sub should show only habit name (not a sentence)
+    els.alarmHabitName && (els.alarmHabitName.textContent = habitName);
+
+    // inline should show the habit name
+    els.alarmHabitNameInline && (els.alarmHabitNameInline.textContent = habitName);
+
+    // Optional: set modal title to include selected sound (no HTML change needed)
+    if (els.alarmModal) {
+      const titleEl = els.alarmModal.querySelector('.modal-title');
+      if (titleEl) titleEl.textContent = `Reminder (${getAlarmSoundLabel(soundN)})`;
+    }
+
+    els.alarmModal.classList.add('is-open');
+    els.alarmModal.setAttribute('aria-hidden', 'false');
+  }
+
+
+  function closeAlarmModal(els) {
+    if (!els.alarmModal) return;
+    els.alarmModal.classList.remove('is-open');
+    els.alarmModal.setAttribute('aria-hidden', 'true');
+  }
+
+  function stopAlarmForCurrentOccurrence() {
+    // Only best-effort: stop audio, keep modal state in sync, and silence indefinitely for this habit.
+    try {
+      stopReminderSound();
+    } catch {
+      // ignore
+    }
+
+    try {
+      // clear active habit silencing only when we know which habit is active.
+      if (state?.meta?.alarm?.activeHabitId) {
+        const habitId = state.meta.alarm.activeHabitId;
+        // set silencedUntil far future to prevent immediate retrigger until next reload.
+        setSilencedUntilForHabit(habitId, Date.now() + 1000 * 60 * 60 * 24);
+        state.meta.alarm.activeHabitId = null;
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      // Update modal state if it exists
+      // (actual button wiring is handled in bindEvents)
+    } catch {
+      // ignore
+    }
+  }
+
+  function snoozeAlarmForCurrentOccurrence(minutes = ALARM_SNOOZE_MINUTES) {
+    try {
+      stopReminderSound();
+    } catch {
+      // ignore
+    }
+
+    try {
+      if (state?.meta?.alarm?.activeHabitId) {
+        const habitId = state.meta.alarm.activeHabitId;
+        setSilencedUntilForHabit(habitId, Date.now() + safeNumber(minutes, ALARM_SNOOZE_MINUTES) * 60 * 1000);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function requestNotificationPermissionOnce() {
+    return new Promise((resolve) => {
+      try {
+        if (!('Notification' in window)) return resolve(false);
+        const meta = state?.meta?.settings;
+        if (meta?.notificationPermissionAsked) {
+          resolve(true);
+          return;
+        }
+        if (meta) meta.notificationPermissionAsked = true;
+        save();
+        if (Notification.permission === 'granted') return resolve(true);
+        if (Notification.permission === 'denied') return resolve(false);
+        Notification.requestPermission().then((p) => resolve(p === 'granted')).catch(() => resolve(false));
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  function showNotificationForHabit(habit) {
+    try {
+      if (!('Notification' in window)) return;
+      if (Notification.permission !== 'granted') return;
+      const title = 'Habit Reminder';
+      const body = formatAlarmMessage(habit);
+      new Notification(title, { body });
+    } catch {
+      // ignore
+    }
+  }
+
+  function startAlarmScheduler(els) {
+    if (state?.meta?.alarm?._schedulerStarted) return;
+    if (!state.meta) state.meta = {};
+    state.meta.alarm = state.meta.alarm || {};
+    state.meta.alarm._schedulerStarted = true;
+
+    // Run immediately once after load.
+    if (typeof requestNotificationPermissionOnce === 'function') {
+      requestNotificationPermissionOnce().catch(() => {});
+    }
+
+    const run = () => {
+
+      try {
+        const now = new Date();
+        for (const habit of (state.habits || [])) {
+          if (!habit?.reminderTime) continue;
+          if (!isHabitScheduledToday(habit, now)) continue;
+          if (!shouldTriggerHabitNow(habit, now)) continue;
+
+          // Avoid retriggering multiple times inside same minute by checking lastTriggeredAt.
+          ensureAlarmState();
+          const last = state.meta.alarm.lastTriggeredAtByHabit[habit.id] || 0;
+          if (now.getTime() - last < 30 * 1000) continue;
+
+          // Trigger
+          stopReminderSound();
+          playReminderSound(getSelectedAlarmSoundUrl(habit));
+          showAlarmModal(els, habit);
+          showNotificationForHabit(habit);
+          setLastTriggeredForHabit(habit.id, now.getTime());
+
+          // Only one active reminder at a time (minimum change)
+          break;
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    run();
+    setInterval(run, ALARM_CHECK_MS);
+  }
+
+  // Reminder/Alarm feature (audio & notifications)
+
+
 
   function openTrashConfirmModal(els, habitId, habitName) {
 
@@ -1066,8 +1404,10 @@
   }
 
 
-  function addHabit({ name, targetDays, reminderTime, reminderType, reminderDays }) {
+  function addHabit({ name, targetDays, reminderTime, reminderType, reminderDays, alarmSound }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
+    const aSound = Number.isFinite(Number(alarmSound)) ? Number(alarmSound) : 1;
+
     state.habits.unshift({
       id,
       name,
@@ -1077,7 +1417,12 @@
       reminderTime: typeof reminderTime === 'string' ? reminderTime : '',
       reminderType: reminderType === 'specific' ? 'specific' : 'daily',
       reminderDays: Array.isArray(reminderDays) ? reminderDays : [],
+      // store both keys for backward compatibility with scheduler/audio helper
+      alarmSound: Math.max(1, Math.min(4, aSound)),
+      reminderSound: Math.max(1, Math.min(4, aSound)),
     });
+
+
 
 
     state.xp = state.xp || {};
@@ -1213,6 +1558,36 @@
         if (e.target === els.habitModal) closeModal(els);
       });
 
+    // Alarm sound selection: radio click should start selected alarm immediately (looping).
+    const bindAlarmSoundRadio = (radioEl, n) => {
+      if (!radioEl) return;
+      radioEl.addEventListener('change', () => {
+        try {
+          const settings = state?.meta?.settings;
+          if (settings && settings.sound === false) return;
+
+          stopReminderSound();
+          state.meta = state.meta || {};
+          state.meta.alarm = state.meta.alarm || {};
+          state.meta.alarm.activeHabitId = null;
+
+          const url = `sounds/alarm${n}.mp3`;
+          playReminderSound(url, { loop: true });
+
+          // Open modal as a visual feedback (optional)
+          showAlarmModal(els, { name: `Alarm ${n}` });
+        } catch {
+          // ignore
+        }
+      });
+    };
+
+    bindAlarmSoundRadio(els.alarmSound1Input, 1);
+    bindAlarmSoundRadio(els.alarmSound2Input, 2);
+    bindAlarmSoundRadio(els.alarmSound3Input, 3);
+    bindAlarmSoundRadio(els.alarmSound4Input, 4);
+
+
     els.habitForm &&
       els.habitForm.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -1220,8 +1595,29 @@
         const targetDays = safeNumber(els.habitTargetInput?.value, 7);
         if (!name) return;
 
-        const reminderTime = els.habitReminderTimeInput ? String(els.habitReminderTimeInput.value || '').trim() : '';
+        // Build reminder time from existing Hour/Minute/AM-PM UI
+        const h = els.habitReminderHourInput ? String(els.habitReminderHourInput.value || '').trim() : '';
+        const m = els.habitReminderMinuteInput ? String(els.habitReminderMinuteInput.value || '').trim() : '';
+        const ampm = els.habitReminderAmPmInput ? String(els.habitReminderAmPmInput.value || '').trim() : '';
+        let reminderTime = '';
+        if (h !== '' && m !== '' && ampm !== '') {
+          // Keep as "H:MM AM/PM" for parsing: convert to HH:MM 24h here
+          const hour12 = safeNumber(h, NaN);
+          const minute = safeNumber(m, NaN);
+          if (Number.isFinite(hour12) && Number.isFinite(minute)) {
+            let hour24 = Math.max(0, Math.min(23, hour12));
+            if (ampm === 'PM' && hour24 !== 12) hour24 += 12;
+            if (ampm === 'AM' && hour24 === 12) hour24 = 0;
+            reminderTime = `${String(hour24).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+          }
+        }
+
         const reminderType = els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked ? 'specific' : 'daily';
+
+        // Keep the active reminder working schedule consistent with the STOP/SNOOZE modal.
+        // This is additive and does not alter existing habit tracking logic.
+        // (Scheduler uses habit.reminderTime + reminderType/reminderDays.)
+
 
         let reminderDays = [];
         if (reminderType === 'specific' && els.habitReminderDaysWrap) {
@@ -1231,13 +1627,17 @@
             .filter(Boolean);
         }
 
+        const alarmSound = els.alarmSound1Input && els.alarmSound1Input.checked ? 1 : els.alarmSound2Input && els.alarmSound2Input.checked ? 2 : els.alarmSound3Input && els.alarmSound3Input.checked ? 3 : els.alarmSound4Input && els.alarmSound4Input.checked ? 4 : 1;
+
         addHabit({
           name,
           targetDays: Math.max(1, Math.min(7, targetDays)),
           reminderTime,
           reminderType,
           reminderDays,
+          alarmSound,
         });
+
 
         closeModal(els);
         renderDashboard(els);
@@ -1304,15 +1704,17 @@
 
     // Trash modal: Permanent Delete (Cancel/OK)
     els.trashPermanentCloseBtn && els.trashPermanentCloseBtn.addEventListener('click', () => closeTrashPermanentModal(els));
-    els.trashPermanentCancelBtn && els.trashPermanentCancelBtn.addEventListener('click', () => closeTrashPermanentModal(els));
-    els.trashPermanentDeleteBtn &&
-      els.trashPermanentDeleteBtn.addEventListener('click', () => {
+      els.trashPermanentCancelBtn && els.trashPermanentCancelBtn.addEventListener('click', () => closeTrashPermanentModal(els));
+      els.trashPermanentDeleteBtn &&
+        els.trashPermanentDeleteBtn.addEventListener('click', () => {
+
         const pending = state._pendingTrashPermanent;
         closeTrashPermanentModal(els);
         if (!pending?.habitId) return;
         deleteHabitPermanently(pending.habitId);
         renderTrash(els);
       });
+
 
     // Main list actions
     els.habitList &&
@@ -1374,8 +1776,20 @@
         }
       });
 
+    // Alarm modal buttons (STOP / SNOOZE)
+    els.alarmStopBtn && els.alarmStopBtn.addEventListener('click', () => {
+      stopAlarmForCurrentOccurrence();
+      closeAlarmModal(els);
+    });
+    els.alarmSnoozeBtn && els.alarmSnoozeBtn.addEventListener('click', () => {
+      snoozeAlarmForCurrentOccurrence(ALARM_SNOOZE_MINUTES);
+      closeAlarmModal(els);
+    });
+
+
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+
         if (els.habitModal && els.habitModal.classList.contains('is-open')) closeModal(els);
         if (els.trashConfirmModal && els.trashConfirmModal.classList.contains('is-open')) closeTrashConfirmModal(els);
         if (els.trashPermanentModal && els.trashPermanentModal.classList.contains('is-open')) closeTrashPermanentModal(els);
@@ -1456,7 +1870,13 @@
       habitReminderTypeDailyInput: $('habitReminderTypeDailyInput'),
       habitReminderTypeSpecificInput: $('habitReminderTypeSpecificInput'),
       habitReminderDaysWrap: $('habitReminderDaysWrap'),
+      alarmSound1Input: $('habitAlarmSound1'),
+
+      alarmSound2Input: $('habitAlarmSound2'),
+      alarmSound3Input: $('habitAlarmSound3'),
+      alarmSound4Input: $('habitAlarmSound4'),
       closeModalBtn: $('closeModalBtn'),
+
       cancelModalBtn: $('cancelModalBtn'),
       newHabitBtn: $('newHabitBtn'),
 
@@ -1490,8 +1910,15 @@
       fatalErrorEl: null,
       currentView: 'dashboard',
 
+      alarmModal: $('alarmModal'),
+      alarmHabitName: $('alarmHabitName'),
+      alarmHabitNameInline: $('alarmHabitNameInline'),
+      alarmStopBtn: $('alarmStopBtn'),
+      alarmSnoozeBtn: $('alarmSnoozeBtn'),
+
       missedWarningEl: $('missedWarning'),
     };
+
 
     const existing = document.getElementById('fatalError');
     if (existing) els.fatalErrorEl = existing;
@@ -1515,7 +1942,8 @@
 
     load();
 
-
+    // Start alarm reminder scheduler (additive; does not alter existing habit logic)
+    startAlarmScheduler(els);
 
     els.currentView = 'dashboard';
     showView('dashboard', els);
