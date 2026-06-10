@@ -144,6 +144,7 @@
     state = state || { habits: [] };
 
     state.meta = state.meta || {};
+
     state.meta.streakHistory = Array.isArray(state.meta.streakHistory) ? state.meta.streakHistory : [];
 
 
@@ -180,7 +181,9 @@
     };
 
     state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true, trash: true };
+    console.log('Final state', state);
   }
+
 
   function getDefaultState() {
     return {
@@ -351,11 +354,14 @@
         state = getDefaultState();
         return;
       }
+      console.log('Loaded state', JSON.parse(raw));
       const parsed = JSON.parse(raw);
+      console.log('Migrated state', migrateAndMergeState(parsed));
       state = migrateAndMergeState(parsed);
 
       // Requirement: on app load, recalculate streak from historical completion records.
       rebuildStreakHistoryFromHabitHistory();
+
 
       seedXpLedgerFromHistory();
       try {
@@ -379,11 +385,14 @@
 
   function save() {
     try {
+      console.log('Saving state', state);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      console.log('Saved to localStorage');
     } catch {
       // ignore
     }
   }
+
 
   // XP is derived (no ledger source-of-truth).
   function seedXpLedgerFromHistory() {
