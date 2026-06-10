@@ -1,30 +1,37 @@
- (() => {
+(() => {
   'use strict';
 
   const STORAGE_KEY = 'habitTracker.v1';
   const STORAGE_MIGRATION_VERSION = 3;
 
-
   const XP = { completeHabit: 10 };
+
+  // Streak is calculated from persistent activity history (dates where user completed at least one habit).
+  // IMPORTANT: streak must NOT depend on current habit checkbox state.
+
 
   /**
    * @typedef {'done'|'not_done'} HabitStatus
    * @typedef {{ [dateKey: string]: HabitStatus }} HabitHistory
-   * @typedef {'daily'|'specific'} ReminderType
-   * @typedef {{id:string,name:string,targetDays:number,createdAt:number,history: HabitHistory, reminderTime?: string, reminderType?: ReminderType, reminderDays?: string[]}} Habit
+   * @typedef {{
+   *   id:string,
+   *   name:string,
+   *   targetDays:number,
+   *   createdAt:number,
+   *   history: HabitHistory,
+   *   alarmTime?: string,   // HH:MM (24h) single internal format
+   *   alarmSound?: number   // 1..4
+   * }} Habit
    */
 
-
-  /**
-   * @typedef {{
+  /** @typedef {{
    *   habits: Habit[],
    *   xp: { total:number, ledger?: any },
    *   streak: { current:number, best:number, lastResolvedKey?: string|null, freezeCount?: number, missedDays?: string[] },
    *   achievements: { unlocked?: Record<string, boolean> },
    *   meta: any,
    *   _dirtyViews?: Record<string, boolean>
-   * }} AppState
-   */
+   * }} AppState */
 
   let state = /** @type {AppState} */ ({ habits: [] });
   let renderScheduled = false;
@@ -58,9 +65,7 @@
     const m = anchor.getMonth();
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     const keys = [];
-    for (let d = 1; d <= daysInMonth; d++) {
-      keys.push(todayKey(new Date(y, m, d)));
-    }
+    for (let d = 1; d <= daysInMonth; d++) keys.push(todayKey(new Date(y, m, d)));
     return keys;
   }
 
@@ -84,17 +89,19 @@
     if (incoming === undefined) return base;
     if (incoming === null) return incoming;
 
-    if (Array.isArray(base) || Array.isArray(incoming)) {
-      return Array.isArray(incoming) ? incoming : base;
-    }
-
-    if (typeof base !== 'object' || typeof incoming !== 'object') {
-      return incoming;
-    }
+    if (Array.isArray(base) || Array.isArray(incoming)) return Array.isArray(incoming) ? incoming : base;
+    if (typeof base !== 'object' || typeof incoming !== 'object') return incoming;
 
     const out = { ...base };
     for (const [k, v] of Object.entries(incoming)) {
-      if (v && typeof v === 'object' && !Array.isArray(v) && base && typeof base[k] === 'object' && !Array.isArray(base[k])) {
+      if (
+        v &&
+        typeof v === 'object' &&
+        !Array.isArray(v) &&
+        base &&
+        typeof base[k] === 'object' &&
+        !Array.isArray(base[k])
+      ) {
         out[k] = deepMerge(base[k], v);
       } else {
         out[k] = v === undefined ? base[k] : v;
@@ -110,14 +117,11 @@
 
   function normalizeTrashEntries(value) {
     if (!Array.isArray(value)) return [];
-
     return value
       .map((entry) => {
         if (!entry || typeof entry !== 'object') return null;
-
         const habit = entry.habit && typeof entry.habit === 'object' ? entry.habit : entry;
         if (!habit || typeof habit !== 'object' || !habit.id) return null;
-
         return {
           habit: {
             ...habit,
@@ -136,51 +140,46 @@
     return `${dateKey}:${habitId}`;
   }
 
-  function syncXpForStatusChange(habitId, dateKey, previousStatus, nextStatus) {
-    ensureStateShape();
-    const key = getXpLedgerKey(habitId, dateKey);
-    const existing = state.xp.ledger[key];
+  function ensureStateShape() {
+    state = state || { habits: [] };
 
-    if (nextStatus === 'done') {
-      if (!existing) {
-        state.xp.ledger[key] = { amount: XP.completeHabit, reason: 'completeHabit', at: Date.now() };
-        state.xp.total = safeNumber(state.xp.total, 0) + XP.completeHabit;
-      }
-      return;
-    }
+    state.meta = state.meta || {};
+    state.meta.streakHistory = Array.isArray(state.meta.streakHistory) ? state.meta.streakHistory : [];
 
-    if (previousStatus === 'done' && existing) {
-      state.xp.total = Math.max(0, safeNumber(state.xp.total, 0) - safeNumber(existing.amount, XP.completeHabit));
-      delete state.xp.ledger[key];
-    }
-  }
 
-  function removeXpForStatus(habitId, dateKey) {
-    ensureStateShape();
-    const key = getXpLedgerKey(habitId, dateKey);
-    const existing = state.xp.ledger[key];
-    if (!existing) return;
-    state.xp.total = Math.max(0, safeNumber(state.xp.total, 0) - safeNumber(existing.amount, XP.completeHabit));
-    delete state.xp.ledger[key];
-  }
+    state.xp = state.xp || { total: 0, ledger: {} };
+    state.xp.total = safeNumber(state.xp.total, 0);
+    state.xp.ledger = state.xp.ledger && typeof state.xp.ledger === 'object' ? state.xp.ledger : {};
 
-  function seedXpLedgerFromHistory() {
-    ensureStateShape();
-    const existingLedger = Object.values(state.xp.ledger || {});
-    if (existingLedger.length) {
-      state.xp.total = existingLedger.reduce((sum, entry) => sum + safeNumber(entry?.amount, XP.completeHabit), 0);
-      return;
-    }
+    state.streak = state.streak || { current: 0, best: 0, lastResolvedKey: null };
+    state.streak.current = safeNumber(state.streak.current, 0);
+    state.streak.best = safeNumber(state.streak.best, 0);
+    state.streak.lastResolvedKey = state.streak.lastResolvedKey ?? null;
+    state.streak.freezeCount = safeNumber(state.streak.freezeCount, 1);
+    state.streak.missedDays = Array.isArray(state.streak.missedDays) ? state.streak.missedDays : [];
 
-    let total = 0;
-    for (const habit of state.habits) {
-      for (const [dateKey, status] of Object.entries(habit.history || {})) {
-        if (status !== 'done') continue;
-        state.xp.ledger[getXpLedgerKey(habit.id, dateKey)] = { amount: XP.completeHabit, reason: 'completeHabit', at: habit.createdAt || Date.now() };
-        total += XP.completeHabit;
-      }
-    }
-    state.xp.total = total;
+    state.achievements = state.achievements || { unlocked: {} };
+    state.achievements.unlocked =
+      state.achievements.unlocked && typeof state.achievements.unlocked === 'object' ? state.achievements.unlocked : {};
+
+    state.meta = state.meta || {};
+    state.meta.settings =
+      state.meta.settings && typeof state.meta.settings === 'object' ? state.meta.settings : { reducedMotion: false, sound: true };
+    state.meta.dailyQuests =
+      state.meta.dailyQuests && typeof state.meta.dailyQuests === 'object' ? state.meta.dailyQuests : { dateKey: null, completed: {} };
+    state.meta.monthlySelected = state.meta.monthlySelected ?? null;
+
+    state.meta.habitTrash = normalizeTrashEntries(state.meta.habitTrash);
+    state.meta.monthlyByMonthKey =
+      state.meta.monthlyByMonthKey && typeof state.meta.monthlyByMonthKey === 'object' ? state.meta.monthlyByMonthKey : {};
+
+    // Alarm runtime state (NOT persisted)
+    state.meta.alarmRuntime = state.meta.alarmRuntime || {
+      activeHabitId: null,
+      activeAudio: null,
+    };
+
+    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true, trash: true };
   }
 
   function getDefaultState() {
@@ -193,21 +192,62 @@
         settings: { reducedMotion: false, sound: true },
         dailyQuests: { dateKey: null, completed: {} },
         monthlySelected: null,
-        habitTrash: [], // [{habit: HabitSnapshot, deletedAt:number}]
+        habitTrash: [],
+        monthlyByMonthKey: {},
+        alarmRuntime: { activeHabitId: null, activeAudio: null },
       },
-      _dirtyViews: { weekly: true, monthly: true },
+      _dirtyViews: { weekly: true, monthly: true, trash: true },
     };
+  }
+
+  function normalizeAlarmTimeToHHMM(v) {
+    if (typeof v !== 'string') return '';
+    const s = v.trim();
+    if (!s) return '';
+
+    // HH:MM 24h
+    const m24 = s.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (m24) return `${String(Number(m24[1])).padStart(2, '0')}:${m24[2]}`;
+
+    // 12h with AM/PM like 02:00 PM
+    const m12 = s.match(/^(\d{1,2})\s*:\s*(\d{2})\s*(AM|PM)$/i);
+    if (m12) {
+      const hh12 = safeNumber(m12[1], NaN);
+      const mm = safeNumber(m12[2], NaN);
+      if (!Number.isFinite(hh12) || !Number.isFinite(mm)) return '';
+      const ampm = String(m12[3]).toUpperCase();
+      let hh24 = hh12 % 12;
+      if (ampm === 'PM') hh24 += 12;
+      return `${String(hh24).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    }
+
+    return '';
+  }
+
+  function parseTimeFromUIToHHMM({ hVal, mVal, ampmVal }) {
+    const h = safeNumber(hVal, NaN);
+    const m = safeNumber(mVal, NaN);
+    let ampm = (ampmVal || '').toString().trim().toUpperCase();
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return '';
+    if (ampm !== 'AM' && ampm !== 'PM') ampm = 'AM';
+
+    // UI hour is 1..12
+    const hh12 = Math.max(1, Math.min(12, h));
+    const mm = Math.max(0, Math.min(59, m));
+
+    let hh24 = hh12 % 12;
+    if (ampm === 'PM') hh24 += 12;
+
+    return `${String(hh24).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
   }
 
   function migrateAndMergeState(parsed) {
     const base = getDefaultState();
     if (!parsed || typeof parsed !== 'object') return base;
 
-    const habits = Array.isArray(parsed.habits) ? parsed.habits : base.habits;
-
     const merged = deepMerge(base, parsed);
-    merged.habits = habits;
 
+    merged.habits = Array.isArray(parsed.habits) ? parsed.habits : base.habits;
     merged.habits = (merged.habits || []).map((h) => {
       const out = { ...(h && typeof h === 'object' ? h : {}) };
       out.id = out.id ?? String(Date.now()) + Math.random().toString(16).slice(2);
@@ -216,23 +256,37 @@
       out.createdAt = safeNumber(out.createdAt, Date.now());
       out.history = out.history && typeof out.history === 'object' ? out.history : {};
 
-      // Optional reminder fields (additive, non-destructive defaults for old habits)
-      out.reminderTime = typeof out.reminderTime === 'string' ? out.reminderTime : '';
-      out.reminderType = out.reminderType === 'specific' ? 'specific' : 'daily';
-      out.reminderDays = Array.isArray(out.reminderDays) ? out.reminderDays : [];
-      if (!Array.isArray(out.reminderDays)) out.reminderDays = [];
-      // Keep only known weekday labels for safety
-      const allowed = new Set(['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']);
-      out.reminderDays = out.reminderDays.filter((d) => typeof d === 'string' && allowed.has(d));
+      // Convert any legacy fields to single internal alarmTime + alarmSound.
+      const legacyTime =
+        (typeof out.alarmTime === 'string' ? out.alarmTime : '') ||
+        (typeof out.reminderTime === 'string' ? out.reminderTime : '') ||
+        (typeof out.reminder?.time === 'string' ? out.reminder.time : '');
+      out.alarmTime = normalizeAlarmTimeToHHMM(legacyTime);
+
+      const legacySound = out.alarmSound ?? out.reminderSound ?? out.alarmSound ?? 1;
+      const v = Number.isFinite(Number(legacySound)) ? Number(legacySound) : 1;
+      out.alarmSound = Math.max(1, Math.min(4, v));
+
+      // Weekday recurrence (Specific Days)
+      // If missing, default to all days (Daily behavior).
+      const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      if (!Array.isArray(out.alarmWeekdaysSelected) || !out.alarmWeekdaysSelected.length) {
+        out.alarmWeekdaysSelected = allWeekdays;
+      } else {
+        out.alarmWeekdaysSelected = out.alarmWeekdaysSelected.filter((d) => allWeekdays.includes(d));
+        if (!out.alarmWeekdaysSelected.length) out.alarmWeekdaysSelected = allWeekdays;
+      }
 
       return out;
-
     });
+
 
     merged.meta = merged.meta && typeof merged.meta === 'object' ? merged.meta : base.meta;
     merged.meta.settings = merged.meta.settings && typeof merged.meta.settings === 'object' ? merged.meta.settings : base.meta.settings;
-    merged.meta.dailyQuests = merged.meta.dailyQuests && typeof merged.meta.dailyQuests === 'object' ? merged.meta.dailyQuests : base.meta.dailyQuests;
+    merged.meta.dailyQuests =
+      merged.meta.dailyQuests && typeof merged.meta.dailyQuests === 'object' ? merged.meta.dailyQuests : base.meta.dailyQuests;
     merged.meta.monthlySelected = merged.meta.monthlySelected ?? null;
+
     const savedTrash = Array.isArray(merged.meta.habitTrash)
       ? merged.meta.habitTrash
       : Array.isArray(parsed.trash)
@@ -242,7 +296,8 @@
           : base.meta.habitTrash;
     merged.meta.habitTrash = normalizeTrashEntries(savedTrash);
 
-    merged.meta.monthlyByMonthKey = merged.meta.monthlyByMonthKey && typeof merged.meta.monthlyByMonthKey === 'object' ? merged.meta.monthlyByMonthKey : {};
+    merged.meta.monthlyByMonthKey =
+      merged.meta.monthlyByMonthKey && typeof merged.meta.monthlyByMonthKey === 'object' ? merged.meta.monthlyByMonthKey : {};
 
     merged.xp = merged.xp && typeof merged.xp === 'object' ? merged.xp : base.xp;
     merged.xp.total = safeNumber(merged.xp.total, 0);
@@ -258,11 +313,35 @@
     merged.achievements = merged.achievements && typeof merged.achievements === 'object' ? merged.achievements : base.achievements;
     merged.achievements.unlocked = merged.achievements.unlocked && typeof merged.achievements.unlocked === 'object' ? merged.achievements.unlocked : {};
 
-    merged._dirtyViews = base._dirtyViews;
-
     merged.meta._storageMigration = { v: STORAGE_MIGRATION_VERSION, migratedAt: Date.now() };
 
+    // Alarm runtime keys should not come from storage
+    merged.meta.alarmRuntime = base.meta.alarmRuntime;
+
+    merged._dirtyViews = base._dirtyViews;
+
     return merged;
+  }
+
+  function rebuildStreakHistoryFromHabitHistory() {
+    ensureStateShape();
+
+    // IMPORTANT: streak history is based on completion records only.
+    // Any habit toggles/unchecked/delete must not affect what days are considered active.
+    const doneDaysSet = new Set();
+
+    for (const habit of state.habits || []) {
+      const history = habit?.history;
+      if (!history || typeof history !== 'object') continue;
+
+      for (const [dateKey, status] of Object.entries(history)) {
+        if (status === 'done' && /^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+          doneDaysSet.add(dateKey);
+        }
+      }
+    }
+
+    state.meta.streakHistory = Array.from(doneDaysSet).sort();
   }
 
   function load() {
@@ -272,25 +351,31 @@
         state = getDefaultState();
         return;
       }
-
       const parsed = JSON.parse(raw);
+      state = migrateAndMergeState(parsed);
 
-      if (parsed && typeof parsed === 'object') {
-        state = migrateAndMergeState(parsed);
-      } else {
-        state = getDefaultState();
-      }
+      // Requirement: on app load, recalculate streak from historical completion records.
+      rebuildStreakHistoryFromHabitHistory();
+
       seedXpLedgerFromHistory();
-
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      } catch {
-        // ignore
+      } catch (err) {
+        try {
+          console.error('alarm scheduler tick error', {
+            message: err && err.message ? err.message : String(err),
+            stack: err && err.stack ? err.stack : null,
+          });
+        } catch {
+          // ignore logging failures
+        }
       }
+
     } catch {
       state = getDefaultState();
     }
   }
+
 
   function save() {
     try {
@@ -300,49 +385,96 @@
     }
   }
 
-  function ensureStateShape() {
-    state = state || { habits: [] };
-    state.xp = state.xp || { total: 0, ledger: {} };
-    state.xp.total = safeNumber(state.xp.total, 0);
-    state.xp.ledger = state.xp.ledger && typeof state.xp.ledger === 'object' ? state.xp.ledger : {};
-
-    state.streak = state.streak || { current: 0, best: 0, lastResolvedKey: null };
-    state.streak.current = safeNumber(state.streak.current, 0);
-    state.streak.best = safeNumber(state.streak.best, 0);
-    state.streak.lastResolvedKey = state.streak.lastResolvedKey ?? null;
-    state.streak.freezeCount = safeNumber(state.streak.freezeCount, 1);
-    state.streak.missedDays = Array.isArray(state.streak.missedDays) ? state.streak.missedDays : [];
-
-    state.achievements = state.achievements || { unlocked: {} };
-    state.achievements.unlocked = state.achievements.unlocked && typeof state.achievements.unlocked === 'object' ? state.achievements.unlocked : {};
-
-    state.meta = state.meta || {};
-    state.meta.settings = state.meta.settings && typeof state.meta.settings === 'object' ? state.meta.settings : { reducedMotion: false, sound: true };
-    state.meta.dailyQuests = state.meta.dailyQuests && typeof state.meta.dailyQuests === 'object' ? state.meta.dailyQuests : { dateKey: null, completed: {} };
-    state.meta.monthlySelected = state.meta.monthlySelected ?? null;
-    state.meta.habitTrash = normalizeTrashEntries(state.meta.habitTrash);
-    state.meta.monthlyByMonthKey = state.meta.monthlyByMonthKey && typeof state.meta.monthlyByMonthKey === 'object' ? state.meta.monthlyByMonthKey : {};
-
-    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true };
+  // XP is derived (no ledger source-of-truth).
+  function seedXpLedgerFromHistory() {
+    // keep for backward compatibility with old localStorage shape
+    ensureStateShape();
+    state.xp.total = 0;
   }
 
-  function isHabitDayComplete(dateKey) {
-    // Streak is earned when the required condition is met for that day.
-    // Current app setup implies:
-    // - If there are multiple habits, user expects streak only when EVERY habit is marked done
-    //   (see requirement text: "(or all required habits, depending on the current setup)").
-    // - However, we should NOT require explicit 'not_done' entries; only treat missing/undefined
-    //   history as not completed.
-    if (!state.habits.length) return false;
 
-    // Every habit must be marked 'done' for that date.
-    for (const habit of state.habits) {
-      const h = habit?.history;
-      if (!h || h[dateKey] !== 'done') return false;
+  // =============================
+  // Streak logic (activity-date based)
+  // =============================
+
+  function isAnyHabitDoneOnDate(dateKey) {
+    for (const habit of state.habits || []) {
+      if (habit?.history?.[dateKey] === 'done') return true;
     }
-    return true;
+    return false;
   }
 
+
+  function activityDateHistorySync() {
+    // IMPORTANT: streak must be based only on persisted activity dates,
+    // and must NOT change when habits are unchecked/deleted.
+    // So we only normalize/validate the stored date keys.
+    ensureStateShape();
+
+    const unique = Array.from(new Set(state.meta.streakHistory || []));
+    const filtered = unique
+      .filter((k) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k))
+      .sort();
+
+    state.meta.streakHistory = filtered;
+  }
+
+
+  function computeCurrentStreakFromHistory() {
+    // IMPORTANT: streak must be based only on persisted activity dates,
+    // not on current checklist state.
+    activityDateHistorySync();
+
+    const hist = (state.meta.streakHistory || []).slice();
+    if (!hist.length) return 0;
+
+    // Current streak = consecutive active days ending at the latest active day.
+    const set = new Set(hist);
+    const latest = hist[hist.length - 1];
+
+    let streak = 0;
+    let cursor = latest;
+    while (set.has(cursor)) {
+      streak++;
+      const d = new Date(cursor + 'T00:00:00');
+      d.setDate(d.getDate() - 1);
+      cursor = todayKey(d);
+    }
+
+    return streak;
+  }
+
+
+  function computeBestStreakFromHistory() {
+    activityDateHistorySync();
+
+    const hist = (state.meta.streakHistory || []).slice();
+    if (!hist.length) return 0;
+
+    const set = new Set(hist);
+    let best = 0;
+
+    for (const start of hist) {
+      // start is potential beginning of a run if previous day is not active
+      const d = new Date(start + 'T00:00:00');
+      d.setDate(d.getDate() - 1);
+      const prev = todayKey(d);
+      if (set.has(prev)) continue;
+
+      let cur = 0;
+      let cursor = start;
+      while (set.has(cursor)) {
+        cur++;
+        const d2 = new Date(cursor + 'T00:00:00');
+        d2.setDate(d2.getDate() + 1);
+        cursor = todayKey(d2);
+      }
+      best = Math.max(best, cur);
+
+    }
+
+    return best;
+  }
 
 
   function computeStreakUpTo(dateKeyInclusive) {
@@ -377,16 +509,18 @@
 
   function resolveDailyStreakAndMissedDays(els) {
     ensureStateShape();
-    const today = todayKey(new Date());
-    const current = isHabitDayComplete(today) ? computeStreakUpTo(today) : 0;
-    const best = computeBestStreak();
+
+    // Current/best streak must be based on persisted activity dates,
+    // not on current checklist checkbox state.
+    const current = computeCurrentStreakFromHistory();
+    const best = computeBestStreakFromHistory();
+
     state.streak.current = current;
     state.streak.best = Math.max(state.streak.best || 0, best);
 
-    if (els && els.missedWarningEl) {
-      els.missedWarningEl.classList.remove('is-show');
-    }
+    if (els && els.missedWarningEl) els.missedWarningEl.classList.remove('is-show');
   }
+
 
   function getLevelFromXp(totalXp) {
     const x = Math.max(0, Number(totalXp) || 0);
@@ -397,16 +531,22 @@
   }
 
   function computeXpTotalForToday() {
+    // XP derived from active & completed habits.
     ensureStateShape();
-    return state.xp.total || 0;
+    const tKey = todayKey();
+    let completedCount = 0;
+    for (const habit of state.habits || []) {
+      if (habit?.history?.[tKey] === 'done') completedCount++;
+    }
+    return completedCount * XP.completeHabit;
   }
+
 
   function renderXpUi(els) {
     if (!els.xpTotalEl || !els.xpFillEl || !els.xpPctEl || !els.xpNextLabelEl || !els.levelBadgeEl) return;
 
     ensureStateShape();
     const total = computeXpTotalForToday();
-    state.xp.total = total;
 
     els.xpTotalEl.textContent = String(total);
 
@@ -428,20 +568,20 @@
 
   function showView(view, els) {
     els.currentView = view;
-    const map = { dashboard: els.viewDashboard, weekly: els.viewWeekly, monthly: els.viewMonthly, settings: els.viewSettings, trash: els.viewTrash };
+    const map = {
+      dashboard: els.viewDashboard,
+      weekly: els.viewWeekly,
+      monthly: els.viewMonthly,
+      settings: els.viewSettings,
+      trash: els.viewTrash,
+    };
+
     for (const [k, el] of Object.entries(map)) {
       if (!el) continue;
       el.classList.toggle('is-hidden', k !== view);
     }
 
-    if (els.navItems) {
-      els.navItems.forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
-    }
-
-    if (els.mobileNav && els.mobileNav.classList.contains('is-open')) {
-      els.mobileNav.classList.remove('is-open');
-      els.menuBtn && els.menuBtn.setAttribute('aria-expanded', 'false');
-    }
+    if (els.navItems) els.navItems.forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
 
     if (view === 'weekly') state._dirtyViews.weekly = true;
     if (view === 'monthly') state._dirtyViews.monthly = true;
@@ -486,7 +626,7 @@
 
     const tKey = todayKey();
     const habits = state.habits;
-    if (els.habitList) els.habitList.innerHTML = '';
+    els.habitList && (els.habitList.innerHTML = '');
 
     let doneCount = 0;
     let totalCount = 0;
@@ -558,16 +698,15 @@
       els.habitList.appendChild(frag);
     }
 
-    if (els.emptyState) els.emptyState.classList.toggle('is-hidden', habits.length !== 0);
+    els.emptyState && els.emptyState.classList.toggle('is-hidden', habits.length !== 0);
 
     const pct = totalCount === 0 ? 0 : Math.round((doneCount / totalCount) * 100);
     els.progressMeta && (els.progressMeta.textContent = `${pct}% completed`);
     els.progressFill && (els.progressFill.style.width = `${pct}%`);
     els.progressPct && (els.progressPct.textContent = `${pct}%`);
     els.progressCounts && (els.progressCounts.textContent = `${doneCount} / ${totalCount}`);
-    els.progressBar && els.progressBar.setAttribute('aria-valuenow', String(pct));
 
-    if (els.streakCount) els.streakCount.textContent = String(state.streak?.current ?? 0);
+    els.streakCount && (els.streakCount.textContent = String(state.streak?.current ?? 0));
 
     renderXpUi(els);
 
@@ -588,6 +727,7 @@
 
     const keys = weekKeys();
     const habits = state.habits || [];
+
     let totalDone = 0;
     let totalMissed = 0;
     let bestHabit = null;
@@ -596,21 +736,30 @@
     const dayExplicitCounts = keys.map(() => 0);
 
     for (const habit of habits) {
-      let habitDone = 0;
-      let habitExplicit = 0;
-
-      keys.forEach((dateKey, index) => {
+      for (let i = 0; i < keys.length; i++) {
+        const dateKey = keys[i];
         const status = habit.history?.[dateKey];
         if (status === 'done') {
           totalDone++;
-          habitDone++;
-          habitExplicit++;
-          dayDoneCounts[index]++;
-          dayExplicitCounts[index]++;
+          dayDoneCounts[i]++;
+          dayExplicitCounts[i]++;
         } else if (status === 'not_done') {
           totalMissed++;
+          dayExplicitCounts[i]++;
+        }
+
+        // Best habit pct based on explicit data.
+      }
+
+      let habitDone = 0;
+      let habitExplicit = 0;
+      keys.forEach((dateKey) => {
+        const status = habit.history?.[dateKey];
+        if (status === 'done') {
+          habitDone++;
           habitExplicit++;
-          dayExplicitCounts[index]++;
+        } else if (status === 'not_done') {
+          habitExplicit++;
         }
       });
 
@@ -735,77 +884,8 @@
 
     t.appendChild(tbody);
     wrapper.appendChild(t);
-
     els.weeklyTable.innerHTML = '';
     els.weeklyTable.appendChild(wrapper);
-  }
-
-  function getSelectedMonthAnchor() {
-    const ms = state?.meta?.monthlySelected;
-    if (ms && typeof ms === 'object' && Number.isFinite(ms.y) && Number.isFinite(ms.m)) {
-      return new Date(ms.y, ms.m, 1);
-    }
-    return new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  }
-
-  function setSelectedMonth(y, mi) {
-    ensureStateShape();
-    state.meta.monthlySelected = { y: Number(y), m: Number(mi) };
-    save();
-  }
-
-  function setSelectedMonthByAnchor(dateObj) {
-    setSelectedMonth(dateObj.getFullYear(), dateObj.getMonth());
-  }
-
-  function monthKeyForStorage(anchor) {
-    return `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
-  }
-
-  function loadMonthMap(monthKey) {
-    ensureStateShape();
-    state.meta.monthlyByMonthKey = state.meta.monthlyByMonthKey || {};
-    state.meta.monthlyByMonthKey[monthKey] = state.meta.monthlyByMonthKey[monthKey] || {};
-    return state.meta.monthlyByMonthKey[monthKey];
-  }
-
-  function getStatusForMonth(habitId, dateKey) {
-    const habit = state.habits.find((h) => h.id === habitId);
-    return habit?.history?.[dateKey];
-  }
-
-  function setStatusForMonth(habitId, dateKey, status) {
-    const habit = state.habits.find((h) => h.id === habitId);
-    if (!habit) return;
-    habit.history = habit.history || {};
-    const previous = habit.history[dateKey];
-    habit.history[dateKey] = status;
-    syncXpForStatusChange(habitId, dateKey, previous, status);
-    save();
-  }
-
-  function clearMonth(els) {
-    const anchor = getSelectedMonthAnchor();
-    const mKey = monthKeyForStorage(anchor);
-    const keys = monthKeys(anchor);
-    const monthMap = loadMonthMap(mKey);
-
-    for (const habit of state.habits) {
-      if (habit.history) {
-        for (const k of keys) {
-          if (habit.history[k] === 'done') removeXpForStatus(habit.id, k);
-          delete habit.history[k];
-        }
-      }
-
-      if (monthMap[habit.id]) {
-        for (const k of keys) delete monthMap[habit.id][k];
-      }
-    }
-
-    save();
-    state._dirtyViews.monthly = true;
-    renderMonthly(els);
   }
 
   function renderMonthly(els) {
@@ -826,7 +906,6 @@
     const wrapper = document.createElement('div');
     wrapper.className = 'monthly-table-wrapper';
     wrapper.style.overflowX = 'auto';
-    wrapper.style.overflowY = 'visible';
     wrapper.style.webkitOverflowScrolling = 'touch';
     wrapper.style.width = '100%';
     wrapper.style.maxWidth = '100%';
@@ -881,7 +960,7 @@
         td.style.whiteSpace = 'nowrap';
         td.style.fontWeight = '800';
 
-        const status = getStatusForMonth(habit.id, k);
+        const status = habit.history?.[k];
         let symbol = '—';
         let color = 'rgba(232,238,252,.55)';
         if (status === 'done') {
@@ -907,473 +986,54 @@
 
   function renderSettings() {}
 
-  // ==============================
-  // Alarm Reminder (additive)
-  // ==============================
-
-  const ALARM_DEFAULT_SOUND = 1;
-  const ALARM_SNOOZE_MINUTES = 5;
-  // Check frequently enough to catch the minute boundary even with interval drift.
-  const ALARM_CHECK_MS = 1000;
-
-
-  function allowedReminderDayLabels() {
-    return new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
-  }
-
-  function getHabitReminderDays(habit) {
-    const allowed = allowedReminderDayLabels();
-    if (!habit || habit.reminderType !== 'specific') return [];
-    if (!Array.isArray(habit.reminderDays)) return [];
-    return habit.reminderDays.filter((d) => typeof d === 'string' && allowed.has(d));
-  }
-
-  function dayLabelForDate(dateObj) {
-    const labels = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    return labels[dateObj.getDay()];
-  }
-
-  function parseReminderTimeToTodayDate(reminderTime, ampm) {
-    // reminderTime is typically stored as "HH:MM" in 24h format.
-    if (typeof reminderTime !== 'string' || !reminderTime.includes(':')) return null;
-
-    const [hRaw, mRaw] = reminderTime.split(':');
-    const h = safeNumber(hRaw, NaN);
-    const m = safeNumber(mRaw, NaN);
-    if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
-
-    // If ampm is not provided, treat the value as 24h.
-    let hour = Math.max(0, Math.min(23, h));
-
-    if (ampm === 'AM' || ampm === 'PM') {
-      // Convert 12h -> 24h. Input hour comes from UI 1..12.
-      const isPM = ampm === 'PM';
-      hour = Math.max(1, Math.min(12, hour));
-      if (isPM && hour !== 12) hour += 12;
-      if (!isPM && hour === 12) hour = 0;
-    }
-
-    const now = new Date();
-    now.setHours(hour, m, 0, 0);
-    return now;
-  }
-
-
-  function getAlarmSoundForHabit(habit) {
-    const v = Number(habit?.alarmSound ?? habit?.reminderSound ?? ALARM_DEFAULT_SOUND);
-    const n = Number.isFinite(v) ? v : ALARM_DEFAULT_SOUND;
-    return Math.max(1, Math.min(4, n));
-  }
-
-  function getSelectedAlarmSoundUrl(habit) {
-    const n = getAlarmSoundForHabit(habit);
-    return `sounds/alarm${n}.mp3`;
-  }
-
-  function formatAlarmMessage(habit) {
-    const name = habit?.name || 'your habit';
-    return `Time to complete your habit: ${name}`;
-  }
-
-  function ensureAlarmState() {
-    ensureStateShape();
-    state.meta.alarm = state.meta.alarm && typeof state.meta.alarm === 'object' ? state.meta.alarm : {};
-    state.meta.alarm.silencedUntilByHabit = state.meta.alarm.silencedUntilByHabit && typeof state.meta.alarm.silencedUntilByHabit === 'object' ? state.meta.alarm.silencedUntilByHabit : {};
-    state.meta.alarm.lastTriggeredAtByHabit = state.meta.alarm.lastTriggeredAtByHabit && typeof state.meta.alarm.lastTriggeredAtByHabit === 'object' ? state.meta.alarm.lastTriggeredAtByHabit : {};
-  }
-
-  function unlockAudioIfNeeded() {
-    // Best-effort unlock for mobile/Android WebView.
-    return new Promise((resolve) => {
-      try {
-        const a = new Audio();
-        const t = setTimeout(() => resolve(false), 1200);
-        const onAny = () => {
-          clearTimeout(t);
-          resolve(true);
-        };
-        a.muted = true;
-        a.volume = 0;
-        a.play().then(onAny).catch(() => {
-          clearTimeout(t);
-          resolve(false);
-        });
-      } catch {
-        resolve(false);
-      }
-    });
-  }
-
-  function playReminderSound(url, { loop = true } = {}) {
-    try {
-      // Respect settings toggle
-      if (state?.meta?.settings && state.meta.settings.sound === false) return;
-
-      // Stop old audio (same instance control path for STOP/SNOOZE)
-      stopReminderSound();
-
-      unlockAudioIfNeeded().catch(() => {});
-
-      const a = new Audio(url);
-      a.loop = loop;
-      a.volume = 1;
-      a.muted = false;
-
-      // Always store before play to ensure STOP/SNOOZE always targets the correct instance
-      state.meta.alarm = state.meta.alarm || {};
-      state.meta.alarm._activeAudio = a;
-
-      // Autoplay restrictions: attempt play from user gesture when possible.
-      a.play().catch(() => {});
-    } catch {
-      // ignore
-    }
-  }
-
-
-
-
-  function stopReminderSound() {
-    try {
-      const a = state?.meta?.alarm?._activeAudio;
-      if (a && typeof a.pause === 'function') {
-        a.pause();
-        a.currentTime = 0;
-      }
-    } catch {
-      // ignore
-    }
-    if (state?.meta?.alarm) state.meta.alarm._activeAudio = null;
-  }
-
-  function isHabitScheduledToday(habit, now) {
-    if (!habit?.reminderTime) return false;
-    // reminderType controls whether specific days are active.
-    if (habit.reminderType !== 'specific') return true;
-    const label = dayLabelForDate(now);
-    const days = getHabitReminderDays(habit);
-    return days.includes(label);
-  }
-
-  function computeHabitReminderDateTime(habit) {
-    // Scheduler compatibility: support multiple legacy reminderTime shapes.
-    // Primary expected format: "HH:MM" (24h) string.
-    // Also try to parse numbers like 1230/1245 and strings like "12:45 AM".
-
-    const raw = habit?.reminderTime;
-    if (raw === undefined || raw === null) return null;
-
-    // If reminderTime is numeric (e.g., 1245)
-    if (typeof raw === 'number' && Number.isFinite(raw)) {
-      const n = Math.floor(raw);
-      const hh = Math.floor(n / 100);
-      const mm = n % 100;
-      const reminderDate = new Date();
-      reminderDate.setHours(Math.max(0, Math.min(23, hh)), Math.max(0, Math.min(59, mm)), 0, 0);
-      if (!isHabitScheduledToday(habit, reminderDate)) return null;
-      reminderDate.setSeconds(0, 0);
-      return reminderDate;
-    }
-
-    const reminderTime = String(raw).trim();
-    if (!reminderTime) return null;
-
-    // Try: "HH:MM AM" / "HH:MM PM"
-    const ampmMatch = reminderTime.match(/^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*(AM|PM)\s*$/i);
-    if (ampmMatch) {
-      const hh = safeNumber(ampmMatch[1], NaN);
-      const mm = safeNumber(ampmMatch[2], NaN);
-      const ampm = ampmMatch[3].toUpperCase();
-      if (Number.isFinite(hh) && Number.isFinite(mm)) {
-        const reminderDate = new Date();
-        // reuse existing parser logic by providing AM/PM
-        const parsed = parseReminderTimeToTodayDate(`${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`, ampm);
-        if (!parsed) return null;
-        if (!isHabitScheduledToday(habit, parsed)) return null;
-        parsed.setSeconds(0, 0);
-        return parsed;
-      }
-    }
-
-    // Try: "HH:MM" (24h) with or without leading zeros
-    const hhmmMatch = reminderTime.match(/^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$/);
-    if (hhmmMatch) {
-      const reminderDate = parseReminderTimeToTodayDate(`${String(hhmmMatch[1]).padStart(2,'0')}:${String(hhmmMatch[2]).padStart(2,'0')}`, null);
-      if (!reminderDate || !Number.isFinite(reminderDate.getTime())) return null;
-      if (!isHabitScheduledToday(habit, reminderDate)) return null;
-      reminderDate.setSeconds(0, 0);
-      return reminderDate;
-    }
-
-    // Unknown legacy format
-    return null;
-  }
-
-
-
-
-
-
-  function getSilencedUntilForHabit(habitId) {
-    ensureAlarmState();
-    return state.meta.alarm.silencedUntilByHabit[habitId] || 0;
-  }
-
-  function setSilencedUntilForHabit(habitId, ts) {
-    ensureAlarmState();
-    state.meta.alarm.silencedUntilByHabit[habitId] = ts;
-    save();
-  }
-
-  function setLastTriggeredForHabit(habitId, ts) {
-    ensureAlarmState();
-    state.meta.alarm.lastTriggeredAtByHabit[habitId] = ts;
-    save();
-  }
-
-  function shouldTriggerHabitNow(habit, now) {
-    const reminderDate = computeHabitReminderDateTime(habit);
-    if (!reminderDate) return false;
-
-    const silencedUntil = getSilencedUntilForHabit(habit.id);
-    if (now.getTime() < silencedUntil) return false;
-
-    const createdAt = safeNumber(habit?.createdAt, 0);
-    if (createdAt && now.getTime() - createdAt < 60 * 1000) return false;
-
-    // Minute-locked trigger: exact HH:MM match beats drifting interval.
-    const curY = now.getFullYear();
-    const curM = now.getMonth();
-    const curD = now.getDate();
-    const remY = reminderDate.getFullYear();
-    const remM = reminderDate.getMonth();
-    const remD = reminderDate.getDate();
-
-    if (curY !== remY || curM !== remM || curD !== remD) return false;
-    if (now.getHours() !== reminderDate.getHours()) return false;
-    if (now.getMinutes() !== reminderDate.getMinutes()) return false;
-
-    // Slight tolerance for seconds (0..59) but window is minute-based already.
-    const secDiff = Math.abs(now.getSeconds() - reminderDate.getSeconds());
-    if (secDiff > 10) return false;
-
-    return true;
-  }
-
-
-
-
-
-
-
-  function getAlarmSoundLabel(n) {
-    return `Alarm ${n}`;
-  }
-
-  function showAlarmModal(els, habit) {
-    if (!els.alarmModal) return;
-
-    const habitName = habit?.name || '—';
-    const soundN = getAlarmSoundForHabit(habit);
-
-    // modal-sub should show only habit name (not a sentence)
-    els.alarmHabitName && (els.alarmHabitName.textContent = habitName);
-
-    // inline should show the habit name
-    els.alarmHabitNameInline && (els.alarmHabitNameInline.textContent = habitName);
-
-    // Optional: set modal title to include selected sound (no HTML change needed)
-    if (els.alarmModal) {
-      const titleEl = els.alarmModal.querySelector('.modal-title');
-      if (titleEl) titleEl.textContent = `Reminder (${getAlarmSoundLabel(soundN)})`;
-    }
-
-    els.alarmModal.classList.add('is-open');
-    els.alarmModal.setAttribute('aria-hidden', 'false');
-  }
-
-
-  function closeAlarmModal(els) {
-    if (!els.alarmModal) return;
-    els.alarmModal.classList.remove('is-open');
-    els.alarmModal.setAttribute('aria-hidden', 'true');
-  }
-
-  function stopAlarmForCurrentOccurrence() {
-    // Only best-effort: stop audio, keep modal state in sync, and silence indefinitely for this habit.
-    try {
-      stopReminderSound();
-    } catch {
-      // ignore
-    }
-
-    try {
-      // clear active habit silencing only when we know which habit is active.
-      if (state?.meta?.alarm?.activeHabitId) {
-        const habitId = state.meta.alarm.activeHabitId;
-        // set silencedUntil far future to prevent immediate retrigger until next reload.
-        setSilencedUntilForHabit(habitId, Date.now() + 1000 * 60 * 60 * 24);
-        state.meta.alarm.activeHabitId = null;
-      }
-    } catch {
-      // ignore
-    }
-
-    try {
-      // Update modal state if it exists
-      // (actual button wiring is handled in bindEvents)
-    } catch {
-      // ignore
-    }
-  }
-
-  function snoozeAlarmForCurrentOccurrence(minutes = ALARM_SNOOZE_MINUTES) {
-    try {
-      stopReminderSound();
-    } catch {
-      // ignore
-    }
-
-    try {
-      if (state?.meta?.alarm?.activeHabitId) {
-        const habitId = state.meta.alarm.activeHabitId;
-        setSilencedUntilForHabit(habitId, Date.now() + safeNumber(minutes, ALARM_SNOOZE_MINUTES) * 60 * 1000);
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  function requestNotificationPermissionOnce() {
-    return new Promise((resolve) => {
-      try {
-        if (!('Notification' in window)) return resolve(false);
-        const meta = state?.meta?.settings;
-        if (meta?.notificationPermissionAsked) {
-          resolve(true);
-          return;
-        }
-        if (meta) meta.notificationPermissionAsked = true;
-        save();
-        if (Notification.permission === 'granted') return resolve(true);
-        if (Notification.permission === 'denied') return resolve(false);
-        Notification.requestPermission().then((p) => resolve(p === 'granted')).catch(() => resolve(false));
-      } catch {
-        resolve(false);
-      }
-    });
-  }
-
-  function showNotificationForHabit(habit) {
-    try {
-      if (!('Notification' in window)) return;
-      if (Notification.permission !== 'granted') return;
-      const title = 'Habit Reminder';
-      const body = formatAlarmMessage(habit);
-      new Notification(title, { body });
-    } catch {
-      // ignore
-    }
-  }
-
-  function startAlarmScheduler(els) {
-    if (state?.meta?.alarm?._schedulerStarted) return;
-    if (!state.meta) state.meta = {};
-    state.meta.alarm = state.meta.alarm || {};
-    state.meta.alarm._schedulerStarted = true;
-
-    // Run immediately once after load.
-    if (typeof requestNotificationPermissionOnce === 'function') {
-      requestNotificationPermissionOnce().catch(() => {});
-    }
-
-    const run = () => {
-
-      try {
-        const now = new Date();
-        for (const habit of (state.habits || [])) {
-          if (!habit?.reminderTime) continue;
-          if (!isHabitScheduledToday(habit, now)) continue;
-          if (!shouldTriggerHabitNow(habit, now)) continue;
-
-          // Avoid retriggering multiple times for same habit+scheduled minute.
-          ensureAlarmState();
-          const last = state.meta.alarm.lastTriggeredAtByHabit[habit.id];
-          const curMinuteKey = `${todayKey(now)}:${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-          if (last && last === curMinuteKey) continue;
-
-          // Trigger
-          state.meta.alarm.activeHabitId = habit.id;
-
-          stopReminderSound();
-          playReminderSound(getSelectedAlarmSoundUrl(habit));
-          showAlarmModal(els, habit);
-          showNotificationForHabit(habit);
-          setLastTriggeredForHabit(habit.id, now.getTime());
-
-          // Only one active reminder at a time (minimum change)
-          break;
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    run();
-    setInterval(run, ALARM_CHECK_MS);
-  }
-
-  // Reminder/Alarm feature (audio & notifications)
-
-
+  // =============================
+  // Trash
+  // =============================
 
   function openTrashConfirmModal(els, habitId, habitName) {
-
-
     ensureStateShape();
-    state._pendingTrashDelete = { habitId, habitName: habitName || (state.habits.find((h) => h.id === habitId)?.name || ''), snapshot: null };
+    state._pendingTrashDelete = {
+      habitId,
+      habitName: habitName || (state.habits.find((h) => h.id === habitId)?.name || ''),
+      snapshot: null,
+    };
 
-    // snapshot the habit right away, so it survives refresh even if user closes in-between
     const habit = state.habits.find((h) => h.id === habitId);
-    if (habit) {
-      state._pendingTrashDelete.snapshot = cloneData(habit);
-    }
+    if (habit) state._pendingTrashDelete.snapshot = cloneData(habit);
 
-    if (!els.trashConfirmModal) return;
-    els.trashConfirmModal.classList.add('is-open');
-    els.trashConfirmModal.setAttribute('aria-hidden', 'false');
+    els.trashConfirmModal?.classList.add('is-open');
+    els.trashConfirmModal?.setAttribute('aria-hidden', 'false');
   }
 
   function closeTrashConfirmModal(els) {
-    if (!els.trashConfirmModal) return;
-    els.trashConfirmModal.classList.remove('is-open');
-    els.trashConfirmModal.setAttribute('aria-hidden', 'true');
+    els.trashConfirmModal?.classList.remove('is-open');
+    els.trashConfirmModal?.setAttribute('aria-hidden', 'true');
     state._pendingTrashDelete = null;
   }
 
   function openTrashPermanentModal(els, habitId) {
     load();
     ensureStateShape();
+
     const trashEntry = state.meta.habitTrash.find((t) => t.habit?.id === habitId);
     const habitName = trashEntry?.habit?.name || '';
 
     state._pendingTrashPermanent = { habitId, habitName };
 
-    if (!els.trashPermanentModal) return;
-    els.trashPermanentModal.classList.add('is-open');
-    els.trashPermanentModal.setAttribute('aria-hidden', 'false');
+    els.trashPermanentModal?.classList.add('is-open');
+    els.trashPermanentModal?.setAttribute('aria-hidden', 'false');
   }
 
   function closeTrashPermanentModal(els) {
-    if (!els.trashPermanentModal) return;
-    els.trashPermanentModal.classList.remove('is-open');
-    els.trashPermanentModal.setAttribute('aria-hidden', 'true');
+    els.trashPermanentModal?.classList.remove('is-open');
+    els.trashPermanentModal?.setAttribute('aria-hidden', 'true');
     state._pendingTrashPermanent = null;
   }
 
   function moveHabitToTrash(habitId) {
     load();
     ensureStateShape();
+
     const habit = state.habits.find((h) => h.id === habitId);
     if (!habit) return;
 
@@ -1389,22 +1049,42 @@
     state._dirtyViews.monthly = true;
     state._dirtyViews.trash = true;
     save();
-
   }
-
-
 
   function deleteHabitPermanently(habitId) {
     load();
     ensureStateShape();
+
+    // If the habit was marked done today, remove its awarded XP before deleting.
+    const tKey = todayKey();
+    if (state.habits?.length) {
+      const habitInLiveList = state.habits.find((h) => h.id === habitId);
+      // If habit is already in trash (not in live list), it won't be found here.
+      // In that case, check the snapshot inside habitTrash below.
+      // XP derived from habit history; deleting will automatically remove today's XP.
+      void habitInLiveList;
+      void tKey;
+
+    }
+
+    // Also handle the common case: habit is already removed from state.habits
+    // and only exists as a trash snapshot.
+    void tKey;
+    // XP derived from habit history; no ledger updates needed when deleting.
+    void habitId;
+
+
+
     state.meta.habitTrash = (state.meta.habitTrash || []).filter((t) => t.habit?.id !== habitId);
     save();
     state._dirtyViews.trash = true;
   }
 
+
   function restoreHabitFromTrash(habitId) {
     load();
     ensureStateShape();
+
     const idx = (state.meta.habitTrash || []).findIndex((t) => t.habit?.id === habitId);
     if (idx === -1) return;
 
@@ -1424,22 +1104,22 @@
   function renderTrash(els) {
     if (!els.viewTrash || !els.trashList) return;
 
-    // Always re-load persisted storage before rendering to avoid stale in-memory state
     load();
     ensureStateShape();
 
     const trash = normalizeTrashEntries(state.meta.habitTrash);
     state.meta.habitTrash = trash;
+
     if (els.trashList) els.trashList.innerHTML = '';
     if (els.trashEmptyState) els.trashEmptyState.classList.toggle('is-hidden', trash.length !== 0);
 
     if (!trash.length) return;
 
     const frag = document.createDocumentFragment();
-
     for (const entry of trash) {
       const habit = entry.habit;
       if (!habit) continue;
+
       const item = document.createElement('div');
       item.className = 'habit-item';
 
@@ -1449,7 +1129,6 @@
       const name = document.createElement('div');
       name.className = 'habit-name';
       name.textContent = habit.name;
-
       left.appendChild(name);
 
       const actions = document.createElement('div');
@@ -1459,34 +1138,312 @@
       restoreBtn.type = 'button';
       restoreBtn.className = 'ghost-btn';
       restoreBtn.textContent = 'Restore';
-      restoreBtn.setAttribute('aria-label', `Restore ${habit.name}`);
       restoreBtn.dataset.action = 'restoreHabit';
       restoreBtn.dataset.habitId = habit.id;
+      restoreBtn.setAttribute('aria-label', `Restore ${habit.name}`);
 
       const permBtn = document.createElement('button');
       permBtn.type = 'button';
       permBtn.className = 'danger-btn';
       permBtn.textContent = 'Permanent Delete';
-      permBtn.setAttribute('aria-label', `Permanently delete ${habit.name}`);
       permBtn.dataset.action = 'permDeleteHabit';
       permBtn.dataset.habitId = habit.id;
+      permBtn.setAttribute('aria-label', `Permanently delete ${habit.name}`);
 
       actions.appendChild(restoreBtn);
       actions.appendChild(permBtn);
 
       item.appendChild(left);
       item.appendChild(actions);
-
       frag.appendChild(item);
     }
 
     els.trashList.appendChild(frag);
   }
 
+  // =============================
+  // NEW Alarm (clean, single system)
+  // =============================
 
-  function addHabit({ name, targetDays, reminderTime, reminderType, reminderDays, alarmSound }) {
+  const ALARM_CHECK_MS = 1000; // scheduler every second
+  const ALARM_SNOOZE_MINUTES = 5;
+
+  function hhmmNow(now) {
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function stopAlarmAudio() {
+    try {
+      const a = state?.meta?.alarmRuntime?._activeAudio;
+      if (a && typeof a.pause === 'function') {
+        a.pause();
+        a.currentTime = 0;
+      }
+    } catch {
+      // ignore
+    }
+    if (state?.meta?.alarmRuntime) state.meta.alarmRuntime._activeAudio = null;
+  }
+
+  function playAlarmAudio(url) {
+    stopAlarmAudio();
+    if (state?.meta?.settings && state.meta.settings.sound === false) { console.log('sound failed', { reason: 'sound disabled' }); return; }
+
+    try {
+      const a = new Audio(url);
+      a.loop = true;
+      a.volume = 1;
+      state.meta.alarmRuntime._activeAudio = a;
+
+      // Browsers may block autoplay; a second attempt helps when user interacts.
+      const attemptPlay = () => {
+        try {
+          a.play().then(()=>{console.log('sound started');}).catch((e)=>{console.log('sound failed', { reason: 'play rejected', error: e && e.message ? e.message : String(e) });});
+      } catch (err) {
+        // ignore, but log in case something breaks the scheduler
+        try {
+          console.error('alarm scheduler tick error', {
+            message: err && err.message ? err.message : String(err),
+            stack: err && err.stack ? err.stack : null,
+          });
+        } catch {
+          // ignore logging failures
+        }
+      }
+    };
+
+
+      attemptPlay();
+      setTimeout(attemptPlay, 250);
+    } catch {
+      // ignore
+    }
+  }
+
+
+  function alarmSoundUrlForHabit(habit) {
+    const n = Math.max(1, Math.min(4, Number(habit?.alarmSound) || 1));
+    return `sounds/alarm${n}.mp3`;
+  }
+
+  function openAlarmModal(els, habit) {
+    const hName = habit?.name || '—';
+    const t = habit?.alarmTime || '—';
+    const sN = Math.max(1, Math.min(4, Number(habit?.alarmSound) || 1));
+    const sLabel = `Alarm ${sN}`;
+
+    els.alarmHabitName && (els.alarmHabitName.textContent = hName);
+    els.alarmHabitNameInline && (els.alarmHabitNameInline.textContent = `${t} • ${sLabel}`);
+
+    els.alarmModal?.classList.add('is-open');
+    els.alarmModal?.setAttribute('aria-hidden', 'false');
+  }
+
+
+  function closeAlarmModal(els) {
+    els.alarmModal?.classList.remove('is-open');
+    els.alarmModal?.setAttribute('aria-hidden', 'true');
+  }
+
+  function stopAlarmOccurrence(els) {
+    stopAlarmAudio();
+    closeAlarmModal(els);
+    if (state?.meta?.alarmRuntime) state.meta.alarmRuntime.activeHabitId = null;
+  }
+
+  function snoozeAlarmOccurrence(els) {
+    const activeHabitId = state?.meta?.alarmRuntime?.activeHabitId;
+    if (!activeHabitId) {
+      stopAlarmOccurrence(els);
+      return;
+    }
+
+    stopAlarmAudio();
+    closeAlarmModal(els);
+
+    const habit = state.habits.find((h) => h.id === activeHabitId);
+    if (!habit?.alarmTime) return;
+
+    const now = new Date();
+    const snoozeAt = new Date(now);
+    snoozeAt.setMinutes(snoozeAt.getMinutes() + ALARM_SNOOZE_MINUTES);
+
+    const snoozeHHMM = hhmmNow(snoozeAt);
+
+    // Store snooze target in runtime only; scheduler will match HH:MM.
+    state.meta.alarmRuntime._snoozeOverride = {
+      habitId: activeHabitId,
+      hhmm: snoozeHHMM,
+    };
+  }
+
+  function weekdayNameForDate(d) {
+    // JS getDay(): 0=Sunday ... 6=Saturday
+    const map = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return map[d.getDay()];
+  }
+
+  function shouldTriggerAlarm(habit, now) {
+    if (!habit?.alarmTime) return false;
+
+    // never trigger while modal is open; STOP/SNOOZE/X controls audio.
+    if (state?.meta?.alarmRuntime?._modalOpen) return false;
+
+    // Weekday gating (Specific Days)
+    const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const selected =
+      Array.isArray(habit.alarmWeekdaysSelected) && habit.alarmWeekdaysSelected.length ? habit.alarmWeekdaysSelected : allWeekdays;
+    const todayName = weekdayNameForDate(now);
+    if (!selected.includes(todayName)) return false;
+
+    // NOTE: scheduler tick handles time-match + grace/catch-up.
+    // shouldTriggerAlarm must ONLY decide whether firing is allowed.
+    return true;
+  }
+
+
+
+  let alarmTimerHandle = null;
+
+  function startAlarmScheduler(els) {
+    if (alarmTimerHandle) return;
+
+    // initialize runtime flags
+    ensureStateShape();
+    state.meta.alarmRuntime._modalOpen = false;
+
+    state.meta.alarmRuntime._lastFiredMinute = state.meta.alarmRuntime._lastFiredMinute || {}; // habitId -> 'YYYY-MM-DD:HH:MM'
+    state.meta.alarmRuntime._lastFiredDayByHabit = state.meta.alarmRuntime._lastFiredDayByHabit || {}; // habitId -> 'YYYY-MM-DD'
+    state.meta.alarmRuntime._snoozeOverride = state.meta.alarmRuntime._snoozeOverride || null;
+
+    const tick = () => {
+      try {
+        const now = new Date();
+        const curHHMM = hhmmNow(now);
+        const minuteKey = `${todayKey(now)}:${curHHMM}`; // stable key (YYYY-MM-DD:HH:MM)
+
+
+
+
+        // snooze override: temporarily fire based on override hhmm
+        const override = state.meta.alarmRuntime._snoozeOverride;
+        if (override && override.hhmm === curHHMM) {
+          const habit = state.habits.find((h) => h.id === override.habitId);
+          if (habit && shouldTriggerAlarm(habit, now)) {
+            // de-dupe same minute per habit
+            const last = state.meta.alarmRuntime._lastFiredMinute[habit.id];
+            if (last !== minuteKey) {
+              state.meta.alarmRuntime._lastFiredMinute[habit.id] = minuteKey;
+              state.meta.alarmRuntime.activeHabitId = habit.id;
+              console.log('reminder matched', { habitName: habit.name, curHHMM });
+
+              state.meta.alarmRuntime._modalOpen = true;
+              stopAlarmAudio();
+              playAlarmAudio(alarmSoundUrlForHabit(habit));
+              openAlarmModal(els, habit);
+              override._used = true;
+            }
+          }
+          return;
+        }
+
+        // normal triggers
+        for (const habit of state.habits || []) {
+          if (!habit?.alarmTime) continue;
+
+        // catch-up trigger with grace window (allow up to 10 minutes late)
+          const [hhStr, mmStr] = habit.alarmTime.split(':');
+          const hh = Number(hhStr);
+          const mm = Number(mmStr);
+          if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
+
+          const scheduled = new Date(now);
+          scheduled.setHours(hh, mm, 0, 0);
+
+          const lateMs = now.getTime() - scheduled.getTime();
+          const graceMs = 10 * 60 * 1000;
+
+          // only trigger after scheduled time, up to grace window
+          if (!(lateMs >= 0 && lateMs <= graceMs)) continue;
+
+          const dayKeyForFired = todayKey(now);
+          const lastDay = state.meta.alarmRuntime._lastFiredDayByHabit[habit.id];
+          if (lastDay === dayKeyForFired) continue;
+
+          const last = state.meta.alarmRuntime._lastFiredMinute[habit.id];
+          if (last === minuteKey) continue;
+
+
+          // Prevent firing right after add: require at least 60s elapsed since creation.
+          const createdAt = safeNumber(habit.createdAt, 0);
+          if (createdAt && now.getTime() - createdAt < 60 * 1000) continue;
+
+          state.meta.alarmRuntime._lastFiredMinute[habit.id] = minuteKey;
+          state.meta.alarmRuntime.activeHabitId = habit.id;
+
+          state.meta.alarmRuntime._modalOpen = true;
+          stopAlarmAudio();
+          playAlarmAudio(alarmSoundUrlForHabit(habit));
+          openAlarmModal(els, habit);
+          break;
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    tick();
+    alarmTimerHandle = setInterval(tick, ALARM_CHECK_MS);
+  }
+
+  function bindAlarmButtons(els) {
+    els.alarmStopBtn?.addEventListener('click', () => {
+      stopAlarmOccurrence(els);
+    });
+
+    els.alarmSnoozeBtn?.addEventListener('click', () => {
+      snoozeAlarmOccurrence(els);
+      state.meta.alarmRuntime._modalOpen = false;
+    });
+
+    const xBtn = $('alarmModalCloseBtn') || els.alarmModal?.querySelector('#alarmModalCloseBtn');
+    xBtn?.addEventListener('click', () => {
+      state.meta.alarmRuntime._snoozeOverride = null;
+      state.meta.alarmRuntime._modalOpen = false;
+      stopAlarmOccurrence(els);
+    });
+
+    // when modal is closed by any means, allow triggers again
+    if (els.alarmModal) {
+      const mo = new MutationObserver(() => {
+        if (!els.alarmModal.classList.contains('is-open')) {
+          state.meta.alarmRuntime._modalOpen = false;
+        }
+      });
+      mo.observe(els.alarmModal, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (els.alarmModal && els.alarmModal.classList.contains('is-open')) {
+        state.meta.alarmRuntime._snoozeOverride = null;
+        state.meta.alarmRuntime._modalOpen = false;
+        stopAlarmOccurrence(els);
+      }
+    });
+  }
+
+  // =============================
+  // Habits create/update
+  // =============================
+
+  function addHabit({ name, targetDays, alarmTimeHHMM, alarmSound, alarmWeekdaysSelected }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
-    const aSound = Number.isFinite(Number(alarmSound)) ? Number(alarmSound) : 1;
+    const aSound = Math.max(1, Math.min(4, Number(alarmSound) || 1));
+
+    const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const picked = Array.isArray(alarmWeekdaysSelected) ? alarmWeekdaysSelected : null;
+    const alarmWeekdays = picked && picked.length ? picked.filter((d) => allWeekdays.includes(d)) : allWeekdays;
 
     state.habits.unshift({
       id,
@@ -1494,122 +1451,111 @@
       targetDays,
       createdAt: Date.now(),
       history: {},
-      reminderTime: typeof reminderTime === 'string' ? reminderTime : '',
-      reminderType: reminderType === 'specific' ? 'specific' : 'daily',
-      reminderDays: Array.isArray(reminderDays) ? reminderDays : [],
-      // store both keys for backward compatibility with scheduler/audio helper
-      alarmSound: Math.max(1, Math.min(4, aSound)),
-      reminderSound: Math.max(1, Math.min(4, aSound)),
+      alarmTime: normalizeAlarmTimeToHHMM(alarmTimeHHMM),
+      alarmSound: aSound,
+      alarmWeekdaysSelected: alarmWeekdays,
     });
 
-
-
-
-    state.xp = state.xp || {};
-    if (typeof state.xp.total !== 'number') state.xp.total = 0;
-
-    save();
-    state._dirtyViews.weekly = true;
-    state._dirtyViews.monthly = true;
-  }
-
-  function deleteHabitById(habitId) {
-    state.habits = state.habits.filter((h) => h.id !== habitId);
     state._dirtyViews.weekly = true;
     state._dirtyViews.monthly = true;
     save();
   }
+
 
   function clearWeek(els) {
     const keys = weekKeys();
     for (const habit of state.habits) {
       if (!habit.history) habit.history = {};
       for (const k of keys) {
-        if (habit.history[k] === 'done') removeXpForStatus(habit.id, k);
+        // XP is derived from habit history, so week/month resets don't need special XP adjustments.
         delete habit.history[k];
+
       }
     }
     save();
     state._dirtyViews.weekly = true;
     renderWeekly(els);
+    // also refresh dashboard meta if user is currently there
+    if (els.currentView === 'dashboard') {
+      renderDashboard(els);
+      renderXpUi(els);
+    }
   }
 
-  function clearAll(els) {
-    state = {
-      habits: [],
-      xp: { total: 0, ledger: {} },
-      streak: { current: 0, best: 0, lastResolvedKey: null, freezeCount: 1, missedDays: [] },
-      achievements: { unlocked: {} },
-      meta: { settings: { reducedMotion: false, sound: true }, dailyQuests: { dateKey: null, completed: {} }, habitTrash: [] },
-      _dirtyViews: { weekly: true, monthly: true },
-    };
-    save();
-    renderDashboard(els);
+
+
+  function getSelectedMonthAnchor() {
+    const ms = state?.meta?.monthlySelected;
+    if (ms && typeof ms === 'object' && Number.isFinite(ms.y) && Number.isFinite(ms.m)) {
+      return new Date(ms.y, ms.m, 1);
+    }
+    return new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   }
+
+  function setSelectedMonth(y, mi) {
+    ensureStateShape();
+    state.meta.monthlySelected = { y: Number(y), m: Number(mi) };
+    save();
+  }
+
+  function setSelectedMonthByAnchor(dateObj) {
+    setSelectedMonth(dateObj.getFullYear(), dateObj.getMonth());
+  }
+
+  function monthKeyForStorage(anchor) {
+    return `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  function loadMonthMap(monthKey) {
+    ensureStateShape();
+    state.meta.monthlyByMonthKey = state.meta.monthlyByMonthKey || {};
+    state.meta.monthlyByMonthKey[monthKey] = state.meta.monthlyByMonthKey[monthKey] || {};
+    return state.meta.monthlyByMonthKey[monthKey];
+  }
+
+  function getStatusForMonth(habitId, dateKey) {
+    const habit = state.habits.find((h) => h.id === habitId);
+    return habit?.history?.[dateKey];
+  }
+
+  function setStatusForMonth(habitId, dateKey, status) {
+    const habit = state.habits.find((h) => h.id === habitId);
+    if (!habit) return;
+    habit.history = habit.history || {};
+    const previous = habit.history[dateKey];
+    habit.history[dateKey] = status;
+    syncXpForStatusChange(habitId, dateKey, previous, status);
+    save();
+  }
+
+  function setStatusForMonthUI(habitId, dateKey, status) {
+    setStatusForMonth(habitId, dateKey, status);
+  }
+
+  // =============================
+  // XP / Levels helpers (non-alarm)
+  // =============================
+
+  // Legacy ledger-based XP functions (kept as no-ops to avoid runtime errors).
+  function ensureXpLedgerEntry() {}
+  function recomputeXpTotalFromLedger() {}
+  function syncXpForStatusChange() {}
+  function removeXpForStatus() {}
+
+
+
+  function resolveLevelUiFromXp(els) {
+    // renderXpUi already updates both XP bar and level badge
+    renderXpUi(els);
+  }
+
+  // =============================
+  // Wiring
+  // =============================
+
 
   function bindEvents(els) {
-    // Notification permission only once (safe flag)
-    // Reminder Sound Test wiring
-    els.testReminderSoundBtn && els.testReminderSoundBtn.addEventListener('click', () => {
-      console.log('[ReminderSound] Test button clicked');
-      try {
-        if (state?.meta?.settings?.sound === false) {
-          console.log('[ReminderSound] sound disabled in settings');
-          return;
-        }
-        const t = getSelectedReminderSound();
-        console.log('[ReminderSound] Test selected sound:', t);
-        unlockAudioIfNeeded()
-          .then((unlocked) => {
-            console.log('[ReminderSound] Test unlockAudioIfNeeded result:', unlocked);
-            if (!unlocked) console.log('[ReminderSound] Test audio unlock failed; still attempting play');
-            playReminderSound(t);
-          })
-          .catch((e) => {
-            console.log('[ReminderSound] Test unlockAudioIfNeeded threw', e);
-            playReminderSound(t);
-          });
-      } catch (e) {
-        console.log('[ReminderSound] Test sound error', e);
-      }
-    });
-
-    try {
-      ensureStateShape();
-      const settings = state.meta.settings || (state.meta.settings = { reducedMotion: false, sound: true });
-      if (!settings.notificationPermissionAsked) {
-        settings.notificationPermissionAsked = true;
-        requestNotificationPermissionOnce().catch(() => {
-          // ignore
-        });
-        save();
-      }
-    } catch {
-      // ignore
-    }
-
-
-    els.openTrashBtn && els.openTrashBtn.addEventListener('click', () => {
-      state._dirtyViews = state._dirtyViews || {};
-      state._dirtyViews.trash = true;
-
-      // Ensure we display the latest persisted trash immediately
-      load();
-
-      // Show view (scheduleRender will call renderTrash)
-      showView('trash', els);
-
-      // Also render right away to avoid any timing/state issues
-      renderTrash(els);
-
-    });
-
-
-    if (els.monthSelect) {
-      // keep as in original (month options function not present in current codebase)
-    }
-
-
+    // navigation
     if (els.navItems && els.navItems.length) {
       els.navItems.forEach((btn) => {
         btn.addEventListener('click', (e) => {
@@ -1621,337 +1567,265 @@
       });
     }
 
-    els.menuBtn &&
-      els.mobileNav &&
-      els.menuBtn.addEventListener('click', () => {
-        const isOpen = els.mobileNav.classList.toggle('is-open');
-        els.menuBtn.setAttribute('aria-expanded', String(isOpen));
-      });
+    els.menuBtn?.addEventListener('click', () => {
+      if (!els.mobileNav) return;
+      const isOpen = els.mobileNav.classList.toggle('is-open');
+      els.menuBtn?.setAttribute('aria-expanded', String(isOpen));
+    });
 
-    els.newHabitBtn && els.newHabitBtn.addEventListener('click', () => openModal(els));
+    els.newHabitBtn?.addEventListener('click', () => openModal(els));
+    els.closeModalBtn?.addEventListener('click', () => closeModal(els));
+    els.cancelModalBtn?.addEventListener('click', () => closeModal(els));
+    els.habitModal?.addEventListener('click', (e) => {
+      if (e.target === els.habitModal) closeModal(els);
+    });
 
-    els.closeModalBtn && els.closeModalBtn.addEventListener('click', () => closeModal(els));
-    els.cancelModalBtn && els.cancelModalBtn.addEventListener('click', () => closeModal(els));
+    els.openTrashBtn?.addEventListener('click', () => {
+      state._dirtyViews = state._dirtyViews || {};
+      state._dirtyViews.trash = true;
+      load();
+      showView('trash', els);
+      renderTrash(els);
+    });
 
-    els.habitModal &&
-      els.habitModal.addEventListener('click', (e) => {
-        if (e.target === els.habitModal) closeModal(els);
-      });
+    els.clearWeekBtn?.addEventListener('click', () => clearWeek(els));
 
-    // Alarm sound selection: radio click should start selected alarm immediately (looping).
-    const bindAlarmSoundRadio = (radioEl, n) => {
-      if (!radioEl) return;
-      radioEl.addEventListener('change', () => {
-        try {
-          const settings = state?.meta?.settings;
-          if (settings && settings.sound === false) return;
+    els.monthPrevBtn?.addEventListener('click', () => {
+      const anchor = getSelectedMonthAnchor();
+      setSelectedMonthByAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1));
+      state._dirtyViews.monthly = true;
+      renderMonthly(els);
+    });
 
-          stopReminderSound();
-          state.meta = state.meta || {};
-          state.meta.alarm = state.meta.alarm || {};
-          state.meta.alarm.activeHabitId = null;
+    els.monthNextBtn?.addEventListener('click', () => {
+      const anchor = getSelectedMonthAnchor();
+      setSelectedMonthByAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1));
+      state._dirtyViews.monthly = true;
+      renderMonthly(els);
+    });
 
-          const url = `sounds/alarm${n}.mp3`;
-          // Start a loop while user is selecting; scheduler will handle the real alarm at the configured time.
-          playReminderSound(url, { loop: true });
+    els.clearAllBtn?.addEventListener('click', () => {
+      if (!confirm('Delete all habits and history stored in this browser?')) return;
+      state = getDefaultState();
+      save();
+      showView('dashboard', els);
+      renderDashboard(els);
+    });
 
-        } catch {
-          // ignore
-        }
-      });
-    };
+    // Add habit submit
+    els.habitForm?.addEventListener('submit', (e) => {
+      e.preventDefault();
 
-    bindAlarmSoundRadio(els.alarmSound1Input, 1);
-    bindAlarmSoundRadio(els.alarmSound2Input, 2);
-    bindAlarmSoundRadio(els.alarmSound3Input, 3);
-    bindAlarmSoundRadio(els.alarmSound4Input, 4);
+      const readSelectValue = (el) => (el && typeof el.value !== 'undefined' ? String(el.value) : '');
 
+      const h = readSelectValue(els.habitReminderHourInput);
+      const m = readSelectValue(els.habitReminderMinuteInput);
+      const ampm = readSelectValue(els.habitReminderAmPmInput);
 
-    els.habitForm &&
-      els.habitForm.addEventListener('submit', (e) => {
-        e.preventDefault();
+      const name = els.habitNameInput ? els.habitNameInput.value.trim() : '';
+      const targetDays = safeNumber(els.habitTargetInput?.value, 7);
+      if (!name) return;
 
-        // Force-close native <select> dropdown UI before hiding modal.
-        // Some browsers keep the select popover alive unless focus/disabled is toggled.
-        try {
-          if (document.activeElement && typeof document.activeElement.blur === 'function') {
-            document.activeElement.blur();
-          }
+      const alarmTimeHHMM = parseTimeFromUIToHHMM({ hVal: h, mVal: m, ampmVal: ampm });
+      const alarmSound =
+        els.alarmSound1Input && els.alarmSound1Input.checked
+          ? 1
+          : els.alarmSound2Input && els.alarmSound2Input.checked
+            ? 2
+            : els.alarmSound3Input && els.alarmSound3Input.checked
+              ? 3
+              : els.alarmSound4Input && els.alarmSound4Input.checked
+                ? 4
+                : 1;
 
-          const selectsToNudge = [els.habitReminderHourInput, els.habitReminderMinuteInput, els.habitReminderAmPmInput].filter(Boolean);
-          selectsToNudge.forEach((sel) => {
-            sel.disabled = true;
-          });
+      const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-          setTimeout(() => {
-            selectsToNudge.forEach((sel) => {
-              sel.disabled = false;
-            });
-          }, 0);
-        } catch {
-          // ignore
-        }
-
-        const name = els.habitNameInput ? els.habitNameInput.value.trim() : '';
-
-        const targetDays = safeNumber(els.habitTargetInput?.value, 7);
-        if (!name) return;
-
-        // Build reminder time from existing Hour/Minute/AM-PM UI
-        const h = els.habitReminderHourInput ? String(els.habitReminderHourInput.value || '').trim() : '';
-        const m = els.habitReminderMinuteInput ? String(els.habitReminderMinuteInput.value || '').trim() : '';
-        const ampm = els.habitReminderAmPmInput ? String(els.habitReminderAmPmInput.value || '').trim() : '';
-        let reminderTime = '';
-        if (h !== '' && m !== '' && ampm !== '') {
-          // Keep as "H:MM AM/PM" for parsing: convert to HH:MM 24h here
-          const hour12 = safeNumber(h, NaN);
-          const minute = safeNumber(m, NaN);
-          if (Number.isFinite(hour12) && Number.isFinite(minute)) {
-            let hour24 = Math.max(0, Math.min(23, hour12));
-            if (ampm === 'PM' && hour24 !== 12) hour24 += 12;
-            if (ampm === 'AM' && hour24 === 12) hour24 = 0;
-            reminderTime = `${String(hour24).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
-          }
-        }
-
-        const reminderType = els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked ? 'specific' : 'daily';
-
-        // Keep the active reminder working schedule consistent with the STOP/SNOOZE modal.
-        // This is additive and does not alter existing habit tracking logic.
-        // (Scheduler uses habit.reminderTime + reminderType/reminderDays.)
-
-
-        let reminderDays = [];
-        if (reminderType === 'specific' && els.habitReminderDaysWrap) {
-          reminderDays = Array.from(els.habitReminderDaysWrap.querySelectorAll('input[type="checkbox"]'))
-            .filter((cb) => cb.checked)
-            .map((cb) => cb.dataset.day)
-            .filter(Boolean);
-        }
-
-        const alarmSound = els.alarmSound1Input && els.alarmSound1Input.checked ? 1 : els.alarmSound2Input && els.alarmSound2Input.checked ? 2 : els.alarmSound3Input && els.alarmSound3Input.checked ? 3 : els.alarmSound4Input && els.alarmSound4Input.checked ? 4 : 1;
-
-        addHabit({
-          name,
-          targetDays: Math.max(1, Math.min(7, targetDays)),
-          reminderTime,
-          reminderType,
-          reminderDays,
-          alarmSound,
+      const getSelectedWeekdaysFromUi = () => {
+        if (!els.habitReminderDaysWrap) return [];
+        const cbs = els.habitReminderDaysWrap.querySelectorAll('input[type="checkbox"][data-day]');
+        const out = [];
+        cbs.forEach((cb) => {
+          if (!cb.checked) return;
+          const dn = cb.getAttribute('data-day');
+          if (dn && allWeekdays.includes(dn)) out.push(dn);
         });
+        return out;
+      };
 
+      // Persist weekdays for Specific Days.
+      // Default for missing/empty selections = all days (Daily behavior).
+      const alarmWeekdaysSelected = (() => {
+        const typeSpecific = els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked;
+        if (!typeSpecific) return allWeekdays;
 
-        closeModal(els);
-        renderDashboard(els);
-      });
+        const picked = getSelectedWeekdaysFromUi();
+        return picked.length ? picked : allWeekdays;
+      })();
 
-    // Reminder UI show/hide (Specific Days)
-    els.habitReminderTypeDailyInput &&
-      els.habitReminderTypeDailyInput.addEventListener('change', () => {
-        if (!els.habitReminderDaysWrap) return;
-        els.habitReminderDaysWrap.style.display = 'none';
-      });
-
-    els.habitReminderTypeSpecificInput &&
-      els.habitReminderTypeSpecificInput.addEventListener('change', () => {
-        if (!els.habitReminderDaysWrap) return;
-        els.habitReminderDaysWrap.style.display = 'block';
-      });
-
-
-    els.clearWeekBtn && els.clearWeekBtn.addEventListener('click', () => clearWeek(els));
-
-    els.clearMonthBtn &&
-      els.clearMonthBtn.addEventListener('click', () => {
-        if (!confirm('Reset monthly tracking for this month? This cannot be undone.')) return;
-        clearMonth(els);
-      });
-
-    els.monthPrevBtn &&
-      els.monthPrevBtn.addEventListener('click', () => {
-        const anchor = getSelectedMonthAnchor();
-        setSelectedMonthByAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1));
-        state._dirtyViews.monthly = true;
-        renderMonthly(els);
-      });
-
-    els.monthNextBtn &&
-      els.monthNextBtn.addEventListener('click', () => {
-        const anchor = getSelectedMonthAnchor();
-        setSelectedMonthByAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1));
-        state._dirtyViews.monthly = true;
-        renderMonthly(els);
-      });
-
-    els.clearAllBtn &&
-      els.clearAllBtn.addEventListener('click', () => {
-        if (!confirm('Delete all habits and history stored in this browser?')) return;
-        clearAll(els);
-        showView('dashboard', els);
-      });
-
-    // Trash modal: Delete Habit? (OK/Cancel)
-    els.trashConfirmCloseBtn && els.trashConfirmCloseBtn.addEventListener('click', () => closeTrashConfirmModal(els));
-    els.trashConfirmCancelBtn && els.trashConfirmCancelBtn.addEventListener('click', () => closeTrashConfirmModal(els));
-    els.trashConfirmMoveBtn &&
-      els.trashConfirmMoveBtn.addEventListener('click', () => {
-        const pending = state._pendingTrashDelete;
-        closeTrashConfirmModal(els);
-        if (!pending?.habitId) return;
-        moveHabitToTrash(pending.habitId);
-        renderDashboard(els);
-        renderTrash(els);
-        // If currently on trash view, keep it; else just update.
-      });
-
-    // Trash modal: Permanent Delete (Cancel/OK)
-    els.trashPermanentCloseBtn && els.trashPermanentCloseBtn.addEventListener('click', () => closeTrashPermanentModal(els));
-      els.trashPermanentCancelBtn && els.trashPermanentCancelBtn.addEventListener('click', () => closeTrashPermanentModal(els));
-      els.trashPermanentDeleteBtn &&
-        els.trashPermanentDeleteBtn.addEventListener('click', () => {
-
-        const pending = state._pendingTrashPermanent;
-        closeTrashPermanentModal(els);
-        if (!pending?.habitId) return;
-        deleteHabitPermanently(pending.habitId);
-        renderTrash(els);
+      addHabit({
+        name,
+        targetDays: Math.max(1, Math.min(7, targetDays)),
+        alarmTimeHHMM,
+        alarmSound,
+        alarmWeekdaysSelected,
       });
 
 
-    // Main list actions
-    els.habitList &&
-      els.habitList.addEventListener('click', (e) => {
-        const btn = e.target;
-        const item = btn && btn.closest ? btn.closest('.habit-item') : null;
-        if (!item) return;
-        const habitId = item.dataset.habitId;
-        const action = btn?.dataset?.action;
-        if (!habitId || !action) return;
+      closeModal(els);
+      renderDashboard(els);
+    });
 
-        const tKey = todayKey();
-        if (action === 'deleteHabit') {
-          openTrashConfirmModal(els, habitId);
-          return;
-        }
 
-        if (action === 'setStatus') {
-          const status = btn.dataset.status;
-          const habit = state.habits.find((h) => h.id === habitId);
-          if (!habit) return;
+    // main list actions
+    els.habitList?.addEventListener('click', (e) => {
+      const btn = e.target;
+      const item = btn && btn.closest ? btn.closest('.habit-item') : null;
+      if (!item) return;
 
-          const view = els.currentView || 'dashboard';
-          if (view === 'monthly') {
-            setStatusForMonth(habitId, tKey, status);
-          } else {
-            habit.history = habit.history || {};
-            const previous = habit.history[tKey];
-            habit.history[tKey] = status;
-            syncXpForStatusChange(habitId, tKey, previous, status);
-            save();
+      const habitId = item.dataset.habitId;
+      const action = btn?.dataset?.action;
+      if (!habitId || !action) return;
+
+      const tKey = todayKey();
+      if (action === 'deleteHabit') {
+        openTrashConfirmModal(els, habitId);
+        return;
+      }
+
+      if (action === 'setStatus') {
+        const status = btn.dataset.status;
+        const habit = state.habits.find((h) => h.id === habitId);
+        if (!habit) return;
+
+        const view = els.currentView || 'dashboard';
+        if (view === 'monthly') {
+          setStatusForMonthUI(habitId, tKey, status);
+        } else {
+          habit.history = habit.history || {};
+          const previous = habit.history[tKey];
+          habit.history[tKey] = status;
+
+          // Streak is based only on activity dates (at least one habit marked done).
+          // Unchecking must NOT remove a date from streak history.
+          if (status === 'done' && previous !== 'done') {
+            ensureStateShape();
+            const dk = todayKey();
+            const list = Array.isArray(state.meta.streakHistory) ? state.meta.streakHistory : [];
+            if (!list.includes(dk)) {
+              list.push(dk);
+              list.sort();
+              state.meta.streakHistory = list;
+            }
           }
 
-          if (view === 'dashboard') renderDashboard(els);
-          else if (view === 'weekly') renderWeekly(els);
-          else if (view === 'monthly') renderMonthly(els);
-          renderXpUi(els);
-        }
-      });
+          // XP derived from habit history; no ledger updates needed.
+          void previous;
+          save();
 
-    // Trash list actions
-    els.trashList &&
-      els.trashList.addEventListener('click', (e) => {
-        const btn = e.target;
-        const action = btn?.dataset?.action;
-        const habitId = btn?.dataset?.habitId;
-        if (!action || !habitId) return;
-
-        if (action === 'restoreHabit') {
-          restoreHabitFromTrash(habitId);
-          renderDashboard(els);
-          renderTrash(els);
-          return;
         }
 
-        if (action === 'permDeleteHabit') {
-          openTrashPermanentModal(els, habitId);
-          return;
-        }
-      });
 
-    // Alarm modal buttons (STOP / SNOOZE / X close)
-    els.alarmStopBtn && els.alarmStopBtn.addEventListener('click', () => {
-      stopAlarmForCurrentOccurrence();
-      closeAlarmModal(els);
-    });
-    els.alarmSnoozeBtn && els.alarmSnoozeBtn.addEventListener('click', () => {
-      snoozeAlarmForCurrentOccurrence(ALARM_SNOOZE_MINUTES);
-      closeAlarmModal(els);
-    });
-    // Robust X close binding (works even if modal DOM changes)
-    const alarmXBtn = $('alarmModalCloseBtn') || (els.alarmModal ? els.alarmModal.querySelector('#alarmModalCloseBtn') : null);
-    alarmXBtn && alarmXBtn.addEventListener('click', () => {
-      stopAlarmForCurrentOccurrence();
-      closeAlarmModal(els);
-    });
+        if (view === 'dashboard') renderDashboard(els);
+        else if (view === 'weekly') renderWeekly(els);
+        else if (view === 'monthly') renderMonthly(els);
 
-
-
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-
-        if (els.habitModal && els.habitModal.classList.contains('is-open')) closeModal(els);
-        if (els.trashConfirmModal && els.trashConfirmModal.classList.contains('is-open')) closeTrashConfirmModal(els);
-        if (els.trashPermanentModal && els.trashPermanentModal.classList.contains('is-open')) closeTrashPermanentModal(els);
+        renderXpUi(els);
       }
     });
+
+    // trash actions
+    els.trashConfirmCloseBtn?.addEventListener('click', () => closeTrashConfirmModal(els));
+    els.trashConfirmCancelBtn?.addEventListener('click', () => closeTrashConfirmModal(els));
+
+    els.trashConfirmMoveBtn?.addEventListener('click', () => {
+      const pending = state._pendingTrashDelete;
+      closeTrashConfirmModal(els);
+      if (!pending?.habitId) return;
+      moveHabitToTrash(pending.habitId);
+      renderDashboard(els);
+      renderTrash(els);
+    });
+
+    els.trashPermanentCloseBtn?.addEventListener('click', () => closeTrashPermanentModal(els));
+    els.trashPermanentCancelBtn?.addEventListener('click', () => closeTrashPermanentModal(els));
+
+    els.trashPermanentDeleteBtn?.addEventListener('click', () => {
+      const pending = state._pendingTrashPermanent;
+      closeTrashPermanentModal(els);
+      if (!pending?.habitId) return;
+      deleteHabitPermanently(pending.habitId);
+      renderTrash(els);
+    });
+
+    els.trashList?.addEventListener('click', (e) => {
+      const btn = e.target;
+      const action = btn?.dataset?.action;
+      const habitId = btn?.dataset?.habitId;
+      if (!action || !habitId) return;
+
+      if (action === 'restoreHabit') {
+        restoreHabitFromTrash(habitId);
+        renderDashboard(els);
+        renderTrash(els);
+      }
+
+      if (action === 'permDeleteHabit') {
+        openTrashPermanentModal(els, habitId);
+      }
+    });
+
+    // Alarm buttons
+    bindAlarmButtons(els);
   }
 
   function openModal(els) {
-    if (!els.habitModal || !els.habitNameInput) return;
+    if (!els.habitModal) return;
     els.habitModal.classList.add('is-open');
     els.habitModal.setAttribute('aria-hidden', 'false');
-    els.habitNameInput.focus();
+    els.habitNameInput?.focus();
   }
 
   function closeModal(els) {
     if (!els.habitModal) return;
-
-    // Stop any alarm preview/background audio when modal closes.
-    try {
-      stopReminderSound();
-    } catch {
-      // ignore
-    }
-
     els.habitModal.classList.remove('is-open');
     els.habitModal.setAttribute('aria-hidden', 'true');
-    if (els.habitForm) els.habitForm.reset();
+
+    els.habitForm?.reset();
     if (els.habitTargetInput) els.habitTargetInput.value = 7;
 
-    // Reset reminder inputs (best-effort)
-    if (els.habitReminderTimeInput) els.habitReminderTimeInput.value = '';
     if (els.habitReminderTypeDailyInput) els.habitReminderTypeDailyInput.checked = true;
     if (els.habitReminderDaysWrap) {
+      els.habitReminderDaysWrap.style.display = 'none';
       const cbs = els.habitReminderDaysWrap.querySelectorAll('input[type="checkbox"]');
       cbs.forEach((cb) => (cb.checked = false));
-      els.habitReminderDaysWrap.style.display = 'none';
-    }
-
-    // Also clear any active reminder linkage.
-    if (state?.meta?.alarm) {
-      state.meta.alarm.activeHabitId = null;
     }
   }
 
+  function syncReminderTypeUi(els) {
 
+    if (!els.habitReminderDaysWrap) return;
+    const typeSpecific = els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked;
+    els.habitReminderDaysWrap.style.display = typeSpecific ? 'block' : 'none';
+  }
+
+
+  function bindReminderTypeUi(els) {
+    els.habitReminderTypeDailyInput?.addEventListener('change', () => {
+      syncReminderTypeUi(els);
+    });
+    els.habitReminderTypeSpecificInput?.addEventListener('change', () => {
+      syncReminderTypeUi(els);
+    });
+  }
 
   function init() {
+
+    // Ensure weekday picker matches current default (Specific Days => visible)
+    // after modal open/reset.
+
     const els = {
+
       navItems: Array.from(document.querySelectorAll('.nav-item')),
-
-
-
       mobileNav: $('mobileNav'),
       menuBtn: $('menuBtn'),
 
@@ -1978,10 +1852,9 @@
       clearWeekBtn: $('clearWeekBtn'),
 
       monthRangePill: $('monthRangePill'),
-      monthSelect: $('monthSelect'),
+      monthlyTable: $('monthlyTable'),
       monthPrevBtn: $('monthPrevBtn'),
       monthNextBtn: $('monthNextBtn'),
-      monthlyTable: $('monthlyTable'),
       clearMonthBtn: $('clearMonthBtn'),
 
       clearAllBtn: $('clearAllBtn'),
@@ -1990,17 +1863,19 @@
       habitForm: $('habitForm'),
       habitNameInput: $('habitNameInput'),
       habitTargetInput: $('habitTargetInput'),
-      habitReminderTimeInput: $('habitReminderTimeInput'),
+      habitReminderHourInput: $('habitReminderHourInput'),
+      habitReminderMinuteInput: $('habitReminderMinuteInput'),
+      habitReminderAmPmInput: $('habitReminderAmPmInput'),
       habitReminderTypeDailyInput: $('habitReminderTypeDailyInput'),
       habitReminderTypeSpecificInput: $('habitReminderTypeSpecificInput'),
       habitReminderDaysWrap: $('habitReminderDaysWrap'),
-      alarmSound1Input: $('habitAlarmSound1'),
 
+      alarmSound1Input: $('habitAlarmSound1'),
       alarmSound2Input: $('habitAlarmSound2'),
       alarmSound3Input: $('habitAlarmSound3'),
       alarmSound4Input: $('habitAlarmSound4'),
-      closeModalBtn: $('closeModalBtn'),
 
+      closeModalBtn: $('closeModalBtn'),
       cancelModalBtn: $('cancelModalBtn'),
       newHabitBtn: $('newHabitBtn'),
 
@@ -2020,6 +1895,7 @@
 
       trashList: $('trashList'),
       trashEmptyState: $('trashEmptyState'),
+      openTrashBtn: $('openTrashBtn'),
 
       trashConfirmModal: $('trashConfirmModal'),
       trashConfirmCloseBtn: $('trashConfirmCloseBtn'),
@@ -2032,7 +1908,6 @@
       trashPermanentDeleteBtn: $('trashPermanentDeleteBtn'),
 
       fatalErrorEl: null,
-      currentView: 'dashboard',
 
       alarmModal: $('alarmModal'),
       alarmHabitName: $('alarmHabitName'),
@@ -2041,8 +1916,8 @@
       alarmSnoozeBtn: $('alarmSnoozeBtn'),
 
       missedWarningEl: $('missedWarning'),
+      currentView: 'dashboard',
     };
-
 
     const existing = document.getElementById('fatalError');
     if (existing) els.fatalErrorEl = existing;
@@ -2062,22 +1937,22 @@
     }
 
     bindEvents(els);
-    state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true, trash: true };
+    bindReminderTypeUi(els);
 
     load();
+    ensureStateShape();
 
-    // Start alarm reminder scheduler (additive; does not alter existing habit logic)
-    startAlarmScheduler(els);
+    // Default the reminder picker visibility on load/open.
+    syncReminderTypeUi(els);
 
-    els.currentView = 'dashboard';
+
     showView('dashboard', els);
     renderDashboard(els);
+
+    startAlarmScheduler(els);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
+  else init();
 })();
 
