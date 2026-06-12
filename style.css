@@ -280,8 +280,30 @@ input:focus-visible{
 .analytics-charts{flex:2 1 420px;display:flex;flex-direction:column;gap:14px}
 .chart-section{min-width:0}
 .chart-title{font-weight:900;margin-bottom:10px}
-.weekly-bars{display:flex;gap:6px;align-items:flex-end;min-height:90px}
-.weekly-bars .bar{flex:1;min-width:10px;border-radius:10px;background:rgba(124,92,255,.25);border:1px solid rgba(124,92,255,.35)}
+.weekly-bars{display:flex;gap:6px;align-items:flex-end;min-height:120px}
+.weekly-chart-wrap{position:relative;width:100%;max-width:100%;min-height:120px}
+.weekly-progress-svg{display:block;width:100%;height:auto;touch-action:manipulation}
+.weekly-chart-tooltip{
+  background:rgba(15,23,42,.95);
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 12px 40px rgba(0,0,0,.35);
+  padding:8px 10px;
+  border-radius:14px;
+  font-size:12px;
+  font-weight:900;
+  color:rgba(255,255,255,.95);
+  white-space:nowrap;
+}
+.weekly-chart-empty{
+  padding:18px 12px;
+  width:100%;
+  border:1px dashed rgba(255,255,255,.18);
+  border-radius:18px;
+  text-align:center;
+  color:rgba(232,238,252,.8);
+  font-weight:900;
+}
+
 
 .analytics-loading{display:none}
 

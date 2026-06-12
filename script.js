@@ -143,6 +143,7 @@
   function ensureStateShape() {
     state = state || { habits: [] };
 
+
     state.meta = state.meta || {};
 
     state.meta.streakHistory = Array.isArray(state.meta.streakHistory) ? state.meta.streakHistory : [];
@@ -197,7 +198,10 @@
         monthlySelected: null,
         habitTrash: [],
         monthlyByMonthKey: {},
-        alarmRuntime: { activeHabitId: null, activeAudio: null },
+      alarmRuntime: { activeHabitId: null, activeAudio: null },
+        // Persisted per-habit STOP dismissal state for “today”
+        // habitAlarmDismissals[habitId] = YYYY-MM-DD
+        habitAlarmDismissals: {},
       },
       _dirtyViews: { weekly: true, monthly: true, trash: true },
     };
@@ -662,8 +666,36 @@
         meta.className = 'habit-meta';
         meta.textContent = `${habit.targetDays} days/week`;
 
+        // Reminder indicator (UI-only)
+        // Show only when habit has a *valid* alarmTime saved as HH:MM (24h).
+        // If missing/empty/invalid => render nothing (no placeholder, no reserved space).
+        const alarmTime = habit?.alarmTime;
+        if (typeof alarmTime === 'string' && alarmTime.trim() && /^\d{2}:\d{2}$/.test(alarmTime)) {
+          const alarmEl = document.createElement('div');
+          // Compact + mobile-friendly
+          alarmEl.style.marginTop = '2px';
+          alarmEl.style.fontSize = '12px';
+          alarmEl.style.color = 'rgba(232,238,252,.85)';
+          alarmEl.style.fontWeight = '900';
+
+          // alarmTime is stored as HH:MM (24h). Display as local 12h with AM/PM.
+          const [hhStr, mmStr] = alarmTime.split(':');
+          const hh = Number(hhStr);
+          const mm = Number(mmStr);
+          const ampm = hh >= 12 ? 'PM' : 'AM';
+          const hh12 = ((hh % 12) || 12);
+          const mm2 = String(mm).padStart(2, '0');
+
+          // Must always match saved reminder time.
+          alarmEl.textContent = `⏰ ${hh12}:${mm2} ${ampm}`;
+          left.appendChild(alarmEl);
+        }
+
+
+
         left.appendChild(name);
         left.appendChild(meta);
+
 
         const actions = document.createElement('div');
         actions.className = 'habit-actions';
@@ -732,7 +764,15 @@
   }
 
   function renderAnalytics(els) {
-    if (!els.analyticsTotalCompletedEl || !els.analyticsMissedHabitsEl || !els.analyticsBestHabitEl || !els.analyticsCompletionPctEl || !els.completionPillEl || !els.weeklyBarsEl) return;
+    if (
+      !els.analyticsTotalCompletedEl ||
+      !els.analyticsMissedHabitsEl ||
+      !els.analyticsBestHabitEl ||
+      !els.analyticsCompletionPctEl ||
+      !els.completionPillEl ||
+      !els.weeklyBarsEl
+    )
+      return;
 
     const keys = weekKeys();
     const habits = state.habits || [];
@@ -744,6 +784,8 @@
     const dayDoneCounts = keys.map(() => 0);
     const dayExplicitCounts = keys.map(() => 0);
 
+    // Weekly percentage calculation (chart + metric):
+    // completion% for a day = done / (done + not_done) for that dateKey across all habits.
     for (const habit of habits) {
       for (let i = 0; i < keys.length; i++) {
         const dateKey = keys[i];
@@ -756,10 +798,9 @@
           totalMissed++;
           dayExplicitCounts[i]++;
         }
-
-        // Best habit pct based on explicit data.
       }
 
+      // Best habit (kept as-is logic, only used for metric text)
       let habitDone = 0;
       let habitExplicit = 0;
       keys.forEach((dateKey) => {
@@ -789,21 +830,223 @@
     els.analyticsCompletionPctEl.textContent = `${completionPct}%`;
     els.completionPillEl.textContent = `${completionPct}% completion`;
 
-    els.weeklyBarsEl.innerHTML = '';
-    const frag = document.createDocumentFragment();
-    keys.forEach((dateKey, index) => {
-      const pct = dayExplicitCounts[index] ? Math.round((dayDoneCounts[index] / dayExplicitCounts[index]) * 100) : 0;
-      const d = new Date(dateKey + 'T00:00:00');
-      const label = d.toLocaleDateString(undefined, { weekday: 'short' });
-      const bar = document.createElement('div');
-      bar.className = 'bar';
-      bar.style.height = `${Math.max(8, pct)}%`;
-      bar.title = `${label}: ${pct}%`;
-      bar.setAttribute('role', 'img');
-      bar.setAttribute('aria-label', `${label} completion ${pct}%`);
-      frag.appendChild(bar);
+    // Weekly progress chart data (multi-metric bar dashboard)
+    // green = completed(done)
+    // red = not_done(not_done)
+    // yellow = missed habits
+    //
+    // Updated rules:
+    // - We MUST show graph only for days with meaningful recorded activity.
+    // - If a day has completed=0, not_done=0, missed=0 => leave it completely blank.
+    //
+    // Data sources are strictly habit.history entries (no invented/demo values).
+    const totalHabitCount = habits.length;
+
+    const dayCompleted = keys.map((_, i) => dayDoneCounts[i]);
+    const dayNotDone = keys.map((_, i) => Math.max(0, dayExplicitCounts[i] - dayDoneCounts[i]));
+
+    // “Missed” (yellow) is defined as habits that have NO stored status for that day.
+    // But we will only render the yellow bar when the day has explicit activity.
+    // This prevents crowding on empty days.
+    const dayHasExplicitActivity = keys.map((_, i) => dayExplicitCounts[i] > 0);
+    const dayMissed = keys.map((_, i) => {
+      if (!dayHasExplicitActivity[i]) return 0;
+      return Math.max(0, totalHabitCount - dayExplicitCounts[i]);
     });
-    els.weeklyBarsEl.appendChild(frag);
+
+    const hasAnyWeeklyData = dayCompleted.some((v) => v > 0) || dayNotDone.some((v) => v > 0) || dayMissed.some((v) => v > 0);
+
+    els.weeklyBarsEl.innerHTML = '';
+
+    if (!hasAnyWeeklyData) {
+      const empty = document.createElement('div');
+      empty.className = 'weekly-chart-empty';
+      empty.textContent = 'No weekly data available';
+      els.weeklyBarsEl.appendChild(empty);
+      return;
+    }
+
+    const width = 640;
+    const height = 260;
+    const pad = { l: 44, r: 16, t: 18, b: 44 };
+    const plotW = width - pad.l - pad.r;
+    const plotH = height - pad.t - pad.b;
+
+    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+    const maxCount = Math.max(1, ...keys.map((_, i) => dayCompleted[i] + dayNotDone[i] + dayMissed[i]));
+
+    // Bar layout
+    const groupW = plotW / 7;
+    // Slimmer bars for a cleaner, premium look (mobile friendly)
+    const barW = Math.max(8, Math.min(16, groupW * 0.20));
+    const gap = Math.max(2, Math.floor(groupW * 0.05));
+
+    const colors = {
+      done: 'rgba(34,197,94,.95)',
+      notDone: 'rgba(239,68,68,.95)',
+      missed: 'rgba(234,179,8,.95)',
+      grid: 'rgba(255,255,255,.10)',
+    };
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('class', 'weekly-progress-svg');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Weekly progress bar chart');
+
+    const wrap = document.createElement('div');
+    wrap.className = 'weekly-chart-wrap';
+    wrap.appendChild(svg);
+    els.weeklyBarsEl.appendChild(wrap);
+
+    const axisGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+
+    // y-axis grid + labels for habit count (0..max in 5 steps)
+    const steps = 5;
+    for (let s = 0; s <= steps; s++) {
+      const val = Math.round((maxCount * s) / steps);
+      const y = pad.t + (plotH * (maxCount - val)) / maxCount;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', pad.l);
+      line.setAttribute('x2', pad.l + plotW);
+      line.setAttribute('y1', y.toFixed(2));
+      line.setAttribute('y2', y.toFixed(2));
+      line.setAttribute('stroke', colors.grid);
+      line.setAttribute('stroke-width', '1');
+      axisGroup.appendChild(line);
+
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', pad.l - 10);
+      t.setAttribute('y', (y + 4).toFixed(2));
+      t.setAttribute('text-anchor', 'end');
+      t.setAttribute('fill', 'rgba(232,238,252,.65)');
+      t.setAttribute('font-size', '11');
+      t.textContent = String(val);
+      axisGroup.appendChild(t);
+    }
+
+    const baseLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    baseLine.setAttribute('x1', pad.l);
+    baseLine.setAttribute('x2', pad.l + plotW);
+    baseLine.setAttribute('y1', (pad.t + plotH).toFixed(2));
+    baseLine.setAttribute('y2', (pad.t + plotH).toFixed(2));
+    baseLine.setAttribute('stroke', 'rgba(255,255,255,.14)');
+    baseLine.setAttribute('stroke-width', '1');
+    axisGroup.appendChild(baseLine);
+
+    // x-axis labels required order
+    for (let i = 0; i < 7; i++) {
+      const tx = pad.l + groupW * i + groupW / 2;
+      const lab = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      lab.setAttribute('x', tx.toFixed(2));
+      lab.setAttribute('y', (pad.t + plotH + 24).toFixed(2));
+      lab.setAttribute('text-anchor', 'middle');
+      lab.setAttribute('fill', 'rgba(232,238,252,.75)');
+      lab.setAttribute('font-size', '12');
+      lab.textContent = dayLabels[i];
+      axisGroup.appendChild(lab);
+    }
+
+    svg.appendChild(axisGroup);
+
+    // Trend line (connect daily completed totals across days)
+    const trendPts = dayCompleted.map((v, i) => {
+      const x = pad.l + groupW * i + groupW / 2;
+      const y = pad.t + (plotH * (maxCount - v)) / maxCount;
+      return { x, y };
+    });
+
+    let trendD = '';
+    for (let i = 0; i < trendPts.length; i++) {
+      const p = trendPts[i];
+      if (!trendD) trendD = `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+      else trendD += ` L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+    }
+
+    const trendPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    trendPath.setAttribute('d', trendD);
+    trendPath.setAttribute('fill', 'none');
+    trendPath.setAttribute('stroke', 'rgba(124,92,255,.95)');
+    trendPath.setAttribute('stroke-width', '2.8');
+    trendPath.setAttribute('stroke-linecap', 'round');
+    svg.appendChild(trendPath);
+
+    // Bars
+    for (let i = 0; i < 7; i++) {
+      const baseY = pad.t + plotH;
+      const leftX = pad.l + groupW * i + groupW / 2;
+
+      const completedVal = dayCompleted[i];
+      const notDoneVal = dayNotDone[i];
+      const missedVal = dayMissed[i];
+
+      // Render ONLY if the day has any recorded activity.
+      // If completed=0, notDone=0, missed=0 -> leave completely blank (no bars at all).
+      if (completedVal === 0 && notDoneVal === 0 && missedVal === 0) {
+        continue;
+      }
+
+      const values = [
+        { key: 'done', val: completedVal, color: colors.done },
+        { key: 'notDone', val: notDoneVal, color: colors.notDone },
+        { key: 'missed', val: missedVal, color: colors.missed },
+      ];
+
+      // Place bars within the group (left->right)
+      const totalBarW = 3 * barW + 2 * gap;
+      const startX = leftX - totalBarW / 2;
+
+      values.forEach((it, idx) => {
+        const val = it.val;
+        if (val === 0) return; // keep empty parts blank
+
+        const h = (plotH * val) / maxCount;
+        const x = startX + idx * (barW + gap);
+        const y = baseY - h;
+
+        const r = 7;
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', x.toFixed(2));
+        rect.setAttribute('y', y.toFixed(2));
+        rect.setAttribute('width', barW.toFixed(2));
+        rect.setAttribute('height', Math.max(0.5, h).toFixed(2));
+        rect.setAttribute('rx', r);
+        rect.setAttribute('ry', r);
+        rect.setAttribute('fill', it.color);
+        rect.setAttribute('opacity', '0.92');
+        rect.setAttribute('stroke', 'rgba(255,255,255,.16)');
+        rect.setAttribute('stroke-width', '0.8');
+        rect.setAttribute('role', 'img');
+        rect.setAttribute(
+          'aria-label',
+          `${dayLabels[i]} ${it.key === 'done' ? 'completed' : it.key === 'notDone' ? 'not done' : 'missed'}: ${val}`
+        );
+        svg.appendChild(rect);
+      });
+    }
+
+    // Legend (match theme)
+    const legend = document.createElement('div');
+    legend.className = 'weekly-chart-legend';
+    legend.style.display = 'flex';
+    legend.style.gap = '12px';
+    legend.style.marginTop = '10px';
+    legend.style.flexWrap = 'wrap';
+    legend.innerHTML = `
+      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;">
+        <span style="width:10px;height:10px;border-radius:3px;background:${colors.done};display:inline-block;"></span> 🟢 Completed
+      </span>
+      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;">
+        <span style="width:10px;height:10px;border-radius:3px;background:${colors.notDone};display:inline-block;"></span> 🔴 Not Done
+      </span>
+      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;">
+        <span style="width:10px;height:10px;border-radius:3px;background:${colors.missed};display:inline-block;"></span> 🟡 Missed
+      </span>
+    `;
+
+    els.weeklyBarsEl.appendChild(legend);
   }
 
   function renderWeekly(els) {
@@ -1174,8 +1417,21 @@
   // NEW Alarm (clean, single system)
   // =============================
 
-  const ALARM_CHECK_MS = 1000; // scheduler every second
+  // Minute-accurate scheduler (WebView timers can drift; we align the next tick to HH:MM boundary).
   const ALARM_SNOOZE_MINUTES = 5;
+
+  // scheduler configuration
+  const ALARM_CHECK_MS = 10000; // 10s checks
+
+  // debug flag (keep false in prod; set true to trace alarm reliability)
+  const ALARM_DEBUG = false;
+
+  // Prevent unbounded console spam: only log every N ticks.
+  const ALARM_HEARTBEAT_EVERY = 6;
+
+  // Fired once-per-load missed-alarm recovery window (ms).
+  const ALARM_MISSED_RECOVERY_GRACE_MS = 10 * 60 * 1000;
+
 
   function hhmmNow(now) {
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -1255,10 +1511,41 @@
   }
 
   function stopAlarmOccurrence(els) {
+    const activeHabitId = state?.meta?.alarmRuntime?.activeHabitId;
+
+    // Stop sound immediately.
     stopAlarmAudio();
     closeAlarmModal(els);
+
+    // Persist per-habit dismissal for today.
+    if (activeHabitId) {
+      ensureStateShape();
+      state.meta.habitAlarmDismissals = state.meta.habitAlarmDismissals || {};
+      const tKey = todayKey();
+      state.meta.habitAlarmDismissals[activeHabitId] = tKey;
+
+      // IMPORTANT: also mark runtime de-dupe for this habit.
+      // This prevents re-entry inside the same tick/interval window.
+      if (state?.meta?.alarmRuntime) {
+        const curHHMM = hhmmNow(new Date());
+        const minuteKey = `${tKey}:${curHHMM}`;
+        state.meta.alarmRuntime._lastFiredMinute = state.meta.alarmRuntime._lastFiredMinute || {};
+        state.meta.alarmRuntime._lastFiredMinute[activeHabitId] = minuteKey;
+        state.meta.alarmRuntime._lastFiredDayByHabit = state.meta.alarmRuntime._lastFiredDayByHabit || {};
+        state.meta.alarmRuntime._lastFiredDayByHabit[activeHabitId] = tKey;
+      }
+
+      try {
+        save();
+      } catch {
+        // ignore persistence failures
+      }
+    }
+
     if (state?.meta?.alarmRuntime) state.meta.alarmRuntime.activeHabitId = null;
   }
+
+
 
   function snoozeAlarmOccurrence(els) {
     const activeHabitId = state?.meta?.alarmRuntime?.activeHabitId;
@@ -1267,8 +1554,11 @@
       return;
     }
 
+    // IMPORTANT: snooze should NOT dismiss for the rest of the day.
+    // It only defers triggering for this habit.
     stopAlarmAudio();
     closeAlarmModal(els);
+
 
     const habit = state.habits.find((h) => h.id === activeHabitId);
     if (!habit?.alarmTime) return;
@@ -1295,8 +1585,15 @@
   function shouldTriggerAlarm(habit, now) {
     if (!habit?.alarmTime) return false;
 
+    // Per-habit STOP dismissal: if user pressed STOP for this habit today, never trigger again today.
+    // Stored under state.meta.habitAlarmDismissals[habitId] = YYYY-MM-DD
+    const tKey = todayKey(now);
+    const dismissals = state?.meta?.habitAlarmDismissals;
+    if (habit?.id && dismissals && dismissals[habit.id] === tKey) return false;
+
     // never trigger while modal is open; STOP/SNOOZE/X controls audio.
     if (state?.meta?.alarmRuntime?._modalOpen) return false;
+
 
     // Weekday gating (Specific Days)
     const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -1325,72 +1622,150 @@
     state.meta.alarmRuntime._lastFiredDayByHabit = state.meta.alarmRuntime._lastFiredDayByHabit || {}; // habitId -> 'YYYY-MM-DD'
     state.meta.alarmRuntime._snoozeOverride = state.meta.alarmRuntime._snoozeOverride || null;
 
-    const tick = () => {
+  const tick = () => {
       try {
+        // heartbeat (throttle logging)
         const now = new Date();
-        const curHHMM = hhmmNow(now);
-        const minuteKey = `${todayKey(now)}:${curHHMM}`; // stable key (YYYY-MM-DD:HH:MM)
+        const nowMs = now.getTime();
+        state.meta.alarmRuntime._hbCount = (state.meta.alarmRuntime._hbCount || 0) + 1;
+        if (ALARM_DEBUG || (state.meta.alarmRuntime._hbCount % ALARM_HEARTBEAT_EVERY === 0)) {
+          console.log('[alarm] scheduler running...', {
+            tick: state.meta.alarmRuntime._hbCount,
+            now: now.toISOString(),
+          });
+        }
 
-
-
-
-        // snooze override: temporarily fire based on override hhmm
+        // snooze override: temporarily fire based on override timestamp
         const override = state.meta.alarmRuntime._snoozeOverride;
-        if (override && override.hhmm === curHHMM) {
-          const habit = state.habits.find((h) => h.id === override.habitId);
-          if (habit && shouldTriggerAlarm(habit, now)) {
-            // de-dupe same minute per habit
-            const last = state.meta.alarmRuntime._lastFiredMinute[habit.id];
-            if (last !== minuteKey) {
-              state.meta.alarmRuntime._lastFiredMinute[habit.id] = minuteKey;
-              state.meta.alarmRuntime.activeHabitId = habit.id;
-              console.log('reminder matched', { habitName: habit.name, curHHMM });
+        if (override && typeof override.triggerAtMs === 'number') {
+          const shouldNow = nowMs >= override.triggerAtMs;
+          if (shouldNow) {
+            const habit = state.habits.find((h) => h.id === override.habitId);
+            console.log('[alarm] snooze scan', {
+              habitId: override.habitId,
+              nowMs,
+              triggerAtMs: override.triggerAtMs,
+              shouldTrigger: shouldNow,
+            });
+            if (habit && shouldTriggerAlarm(habit, now)) {
+              // de-dupe per habit per day using stop-dismissal + lastFiredDayByHabit
+              const dayKeyForFired = todayKey(now);
+              const lastDay = state.meta.alarmRuntime._lastFiredDayByHabit[habit.id];
+              const alreadyFired = lastDay === dayKeyForFired;
+              if (!alreadyFired) {
+                state.meta.alarmRuntime._lastFiredDayByHabit[habit.id] = dayKeyForFired;
+                state.meta.alarmRuntime._lastFiredMinute[habit.id] = `${dayKeyForFired}:${hhmmNow(now)}`;
+                state.meta.alarmRuntime.activeHabitId = habit.id;
 
-              state.meta.alarmRuntime._modalOpen = true;
-              stopAlarmAudio();
-              playAlarmAudio(alarmSoundUrlForHabit(habit));
-              openAlarmModal(els, habit);
-              override._used = true;
+                state.meta.alarmRuntime._modalOpen = true;
+                console.log('[alarm] triggered (snooze)', { habitName: habit.name });
+                stopAlarmAudio();
+                playAlarmAudio(alarmSoundUrlForHabit(habit));
+                openAlarmModal(els, habit);
+
+                // mark snooze used so it won't retrigger
+                override._used = true;
+                state.meta.alarmRuntime._snoozeOverride = null;
+              } else {
+                console.log('[alarm] snooze skipped (already fired today)');
+              }
+            } else {
+              console.log('[alarm] snooze skipped (shouldTriggerAlarm false or habit missing)');
             }
           }
           return;
         }
 
-        // normal triggers
+        // normal triggers: timestamp-based comparisons with recovery
+        const tNowDayKey = todayKey(now);
+
+        // per load missed-alarm recovery (fire once if alarm time already passed)
+        // guarded by lastFiredDayByHabit + STOP dismissal.
+        const graceMs = 10 * 60 * 1000;
+
         for (const habit of state.habits || []) {
           if (!habit?.alarmTime) continue;
 
-        // catch-up trigger with grace window (allow up to 10 minutes late)
+          const habitId = habit.id;
+          if (!habitId) continue;
+
+          const dismissals = state?.meta?.habitAlarmDismissals;
+          const dismissedToday = dismissals && dismissals[habitId] === tNowDayKey;
+
+          console.log('[alarm] scan habit', {
+            habitId,
+            habitName: habit.name,
+            nowIso: now.toISOString(),
+            dismissedToday,
+          });
+
+          if (dismissedToday) {
+            console.log('[alarm] skipped (dismissed today)');
+            continue;
+          }
+
+          if (!shouldTriggerAlarm(habit, now)) {
+            console.log('[alarm] skipped (shouldTriggerAlarm false)');
+            continue;
+          }
+
           const [hhStr, mmStr] = habit.alarmTime.split(':');
           const hh = Number(hhStr);
           const mm = Number(mmStr);
-          if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
+          if (!Number.isFinite(hh) || !Number.isFinite(mm)) {
+            console.log('[alarm] skipped (invalid alarmTime)', { alarmTime: habit.alarmTime });
+            continue;
+          }
 
+          // scheduled time for today
           const scheduled = new Date(now);
           scheduled.setHours(hh, mm, 0, 0);
+          const scheduledMs = scheduled.getTime();
 
-          const lateMs = now.getTime() - scheduled.getTime();
-          const graceMs = 10 * 60 * 1000;
+          const timeUntil = scheduledMs - nowMs; // negative if late
 
-          // only trigger after scheduled time, up to grace window
-          if (!(lateMs >= 0 && lateMs <= graceMs)) continue;
+          // Strict comparison with tolerance:
+          // - trigger if now >= scheduledMs
+          // - but avoid triggering for very old times (>graceMs late)
+          const isDue = nowMs >= scheduledMs;
+          const isNotTooLate = nowMs - scheduledMs <= graceMs;
 
-          const dayKeyForFired = todayKey(now);
-          const lastDay = state.meta.alarmRuntime._lastFiredDayByHabit[habit.id];
-          if (lastDay === dayKeyForFired) continue;
+          if (!isDue) {
+            console.log('[alarm] skipped (not due yet)', { timeUntilMs: timeUntil });
+            continue;
+          }
+          if (!isNotTooLate) {
+            console.log('[alarm] skipped (too late beyond grace)', { lateMs: nowMs - scheduledMs });
+            continue;
+          }
 
-          const last = state.meta.alarmRuntime._lastFiredMinute[habit.id];
-          if (last === minuteKey) continue;
-
+          const lastDay = state.meta.alarmRuntime._lastFiredDayByHabit[habitId];
+          if (lastDay === tNowDayKey) {
+            console.log('[alarm] skipped (already fired today)');
+            continue;
+          }
 
           // Prevent firing right after add: require at least 60s elapsed since creation.
           const createdAt = safeNumber(habit.createdAt, 0);
-          if (createdAt && now.getTime() - createdAt < 60 * 1000) continue;
+          if (createdAt && nowMs - createdAt < 60 * 1000) {
+            console.log('[alarm] skipped (just created)');
+            continue;
+          }
 
-          state.meta.alarmRuntime._lastFiredMinute[habit.id] = minuteKey;
-          state.meta.alarmRuntime.activeHabitId = habit.id;
+          // Missed-alarm recovery: if we're within grace window, we trigger once immediately.
+          // This is naturally handled by isDue/isNotTooLate + lastFiredDayByHabit.
+          state.meta.alarmRuntime._lastFiredDayByHabit[habitId] = tNowDayKey;
+          state.meta.alarmRuntime._lastFiredMinute[habitId] = `${tNowDayKey}:${hhmmNow(now)}`;
+          state.meta.alarmRuntime.activeHabitId = habitId;
 
           state.meta.alarmRuntime._modalOpen = true;
+          console.log('[alarm] triggered', {
+            habitName: habit.name,
+            scheduledIso: scheduled.toISOString(),
+            firedAtIso: now.toISOString(),
+            lateMs: nowMs - scheduledMs,
+          });
+
           stopAlarmAudio();
           playAlarmAudio(alarmSoundUrlForHabit(habit));
           openAlarmModal(els, habit);
@@ -1478,16 +1853,23 @@
       for (const k of keys) {
         // XP is derived from habit history, so week/month resets don't need special XP adjustments.
         delete habit.history[k];
-
       }
     }
+
+    // streak depends on persisted completion dates, so rebuild immediately for correct UI
+    rebuildStreakHistoryFromHabitHistory();
+
     save();
     state._dirtyViews.weekly = true;
     renderWeekly(els);
+
     // also refresh dashboard meta if user is currently there
     if (els.currentView === 'dashboard') {
       renderDashboard(els);
       renderXpUi(els);
+    } else if (els.currentView === 'weekly') {
+      // ensure streak cards update when user stays on weekly
+      resolveDailyStreakAndMissedDays(els);
     }
   }
 
@@ -1599,6 +1981,33 @@
 
     els.clearWeekBtn?.addEventListener('click', () => clearWeek(els));
 
+    els.clearMonthBtn?.addEventListener('click', () => {
+      const anchor = getSelectedMonthAnchor();
+      const keys = monthKeys(anchor);
+
+      for (const habit of state.habits) {
+        if (!habit.history) habit.history = {};
+        for (const k of keys) {
+          delete habit.history[k];
+        }
+      }
+
+      rebuildStreakHistoryFromHabitHistory();
+      save();
+
+      state._dirtyViews.monthly = true;
+      renderMonthly(els);
+
+      // If user currently on dashboard, update streak/xp immediately.
+      if (els.currentView === 'dashboard') {
+        renderDashboard(els);
+        renderXpUi(els);
+      } else if (els.currentView === 'monthly') {
+        resolveDailyStreakAndMissedDays(els);
+      }
+    });
+
+
     els.monthPrevBtn?.addEventListener('click', () => {
       const anchor = getSelectedMonthAnchor();
       setSelectedMonthByAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1));
@@ -1635,17 +2044,10 @@
       const targetDays = safeNumber(els.habitTargetInput?.value, 7);
       if (!name) return;
 
-      const alarmTimeHHMM = parseTimeFromUIToHHMM({ hVal: h, mVal: m, ampmVal: ampm });
-      const alarmSound =
-        els.alarmSound1Input && els.alarmSound1Input.checked
-          ? 1
-          : els.alarmSound2Input && els.alarmSound2Input.checked
-            ? 2
-            : els.alarmSound3Input && els.alarmSound3Input.checked
-              ? 3
-              : els.alarmSound4Input && els.alarmSound4Input.checked
-                ? 4
-                : 1;
+      // Reminder must be OFF by default; only save alarm fields if user explicitly enabled it.
+      const reminderTypeSpecificChecked = !!(els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked);
+      const reminderTypeDailyChecked = !!(els.habitReminderTypeDailyInput && els.habitReminderTypeDailyInput.checked);
+      const reminderEnabled = reminderTypeSpecificChecked || reminderTypeDailyChecked;
 
       const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -1661,14 +2063,38 @@
         return out;
       };
 
-      // Persist weekdays for Specific Days.
-      // Default for missing/empty selections = all days (Daily behavior).
-      const alarmWeekdaysSelected = (() => {
-        const typeSpecific = els.habitReminderTypeSpecificInput && els.habitReminderTypeSpecificInput.checked;
-        if (!typeSpecific) return allWeekdays;
+      const alarmTimeHHMM = reminderEnabled
+        ? parseTimeFromUIToHHMM({ hVal: h, mVal: m, ampmVal: ampm })
+        : '';
 
-        const picked = getSelectedWeekdaysFromUi();
-        return picked.length ? picked : allWeekdays;
+      // Only persist alarmSound when reminder is enabled.
+      const alarmSound = reminderEnabled
+        ? (
+            els.alarmSound1Input && els.alarmSound1Input.checked
+              ? 1
+              : els.alarmSound2Input && els.alarmSound2Input.checked
+                ? 2
+                : els.alarmSound3Input && els.alarmSound3Input.checked
+                  ? 3
+                  : els.alarmSound4Input && els.alarmSound4Input.checked
+                    ? 4
+                    : 1
+          )
+        : 0;
+
+      // Only persist selected weekdays when reminder is enabled.
+      const alarmWeekdaysSelected = (() => {
+        if (!reminderEnabled) return [];
+
+        // Persist weekdays for Specific Days.
+        // If specific: selected cbs, fallback -> all days.
+        if (reminderTypeSpecificChecked) {
+          const picked = getSelectedWeekdaysFromUi();
+          return picked.length ? picked : allWeekdays;
+        }
+
+        // Daily reminder => all days.
+        return allWeekdays;
       })();
 
       addHabit({
@@ -1678,6 +2104,7 @@
         alarmSound,
         alarmWeekdaysSelected,
       });
+
 
 
       closeModal(els);
@@ -1802,12 +2229,18 @@
     els.habitForm?.reset();
     if (els.habitTargetInput) els.habitTargetInput.value = 7;
 
-    if (els.habitReminderTypeDailyInput) els.habitReminderTypeDailyInput.checked = true;
+    // Reminder OFF by default (no bell/time saved unless user explicitly enables it).
+    // Required UI reset for both reminder modes.
+    if (els.habitReminderTypeDailyInput) els.habitReminderTypeDailyInput.checked = false;
+    if (els.habitReminderTypeSpecificInput) els.habitReminderTypeSpecificInput.checked = false;
+
     if (els.habitReminderDaysWrap) {
+      // Hide days picker when reminder is OFF.
       els.habitReminderDaysWrap.style.display = 'none';
       const cbs = els.habitReminderDaysWrap.querySelectorAll('input[type="checkbox"]');
       cbs.forEach((cb) => (cb.checked = false));
     }
+
   }
 
   function syncReminderTypeUi(els) {
@@ -1957,6 +2390,25 @@
 
     showView('dashboard', els);
     renderDashboard(els);
+
+    // Midnight rollover re-render so the weekly chart updates without refresh.
+    // Does not modify any completion/streak/history logic; only triggers re-render.
+    let lastDayKey = todayKey();
+    setInterval(() => {
+      const cur = todayKey();
+      if (cur !== lastDayKey) {
+        lastDayKey = cur;
+        // Re-render current view (analytics is on dashboard).
+        if (els.currentView === 'dashboard') {
+          renderDashboard(els);
+          renderXpUi(els);
+        } else if (els.currentView === 'weekly') {
+          renderWeekly(els);
+        } else if (els.currentView === 'monthly') {
+          renderMonthly(els);
+        }
+      }
+    }, 30000);
 
     startAlarmScheduler(els);
   }
