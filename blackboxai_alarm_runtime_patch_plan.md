@@ -1,35 +1,43 @@
-Alarm feature plan (minimal additive changes)
+# BlackboxAI Alarm Runtime Patch Plan
 
-1) index.html + index_fixed.html
-- Add alarm popup modal:
-  - id="alarmModal" class="modal"
-  - include elements:
-    - id="alarmHabitName" (for message)
-    - STOP button id="alarmStopBtn"
-    - SNOOZE button id="alarmSnoozeBtn"
-- Add sound picker inside Add Habit modal:
-  - 4 radio inputs named/ids e.g. alarmSound
-  - default alarmSound=1
-  - input ids: habitAlarmSound1..4
+## Goal
+Make sure the persisted alarm field `habit.alarmTime` always conforms to the invariant used by both:
+- UI rendering gate (`renderDashboard`)
+- alarm scheduler (`startAlarmScheduler`)
 
-2) script.js
-- Add helper functions (additive, do not delete existing):
-  - parseHabitReminderTime(habit): compute today’s target Date from hour/min/sec string plus AM/PM
-  - shouldTriggerForHabit(habit, now): uses reminderType/reminderDays
-  - schedule loop: setInterval every 10s or so, but only triggers when time matches within same minute.
-  - state.meta.reminder: { currentAlarm?: {habitId, scheduledAt, silencedUntil}, lastTriggeredAtByHabit:{} }
-- Add persistence:
-  - store current silencedUntil and lastTriggeredAtByHabit.
-- Audio:
-  - function unlockAudioIfNeeded(): create Audio(), try play with muted first.
-  - function getSelectedAlarmSound(): based on habit-specific alarmSound or default.
-  - function playReminderSound(url): play, handle pause
-- Notifications:
-  - requestNotificationPermissionOnce() called on init if notifications unsupported.
-  - show browser Notification with body "Time to complete your habit: {name}".
+Invariant (alarmTime invariant):
+- `habit.alarmTime` is either a canonical `HH:MM` string in 24h time
+- or `null` (for missing/invalid)
 
-3) STOP/SNOOZE
-- STOP: clear alarm occurrence, store silencedUntil=now+
-- SNOOZE: reschedule by updating silencedUntil=now+5min and store current alarm open.
+## Current status from repo inspection
+- UI gate already checks `typeof alarmTime === 'string' && /^
+{2}:\n{2}$/`.
+- Scheduler assumes `habit.alarmTime.split(':')` and uses numeric hh/mm.
+- `parseTimeFromUIToHHMM(...)` already returns `null` on invalid input.
+- `load()` now calls `validateAndNormalizeAllHabitsAlarmTime()` but the function is **not present** in the file.
 
-Only modify the above files. No CSS changes unless absolutely required (modal uses existing .modal and .modal-card styles).
+## Step-by-step implementation
+1. Add function `validateAndNormalizeAllHabitsAlarmTime()` in `script.js`.
+2. Function behavior:
+   - iterate `state.habits`
+   - normalize/validate each habit’s `alarmTime` using existing `normalizeAlarmTimeToHHMM(...)`
+   - handle legacy values if `habit.alarmTime` contains 12h or other strings
+   - set invalid/empty to `null`
+   - ensure `alarmWeekdaysSelected` exists (already handled during migration, but do a minimal guard if missing)
+3. Call `validateAndNormalizeAllHabitsAlarmTime()` after migration in `load()` (already inserted).
+4. Call it additionally after adding a habit (optional but safe) and before scheduler starts.
+
+## Testing checklist
+- Add a habit with reminder enabled and verify alarm icon renders.
+- Add a habit with reminder enabled but invalid hour/minute inputs (if possible) and verify scheduler does not crash.
+- Manually corrupt localStorage alarmTime entries and reload:
+  - UI should show no reminder indicator
+  - scheduler should not trigger
+
+## Files to edit
+- `script.js`
+
+## Expected outcome
+- No `undefined` / invalid `alarmTime` values reach UI or alarm scheduler.
+- Scheduler and UI remain consistent.
+

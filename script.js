@@ -208,9 +208,9 @@
   }
 
   function normalizeAlarmTimeToHHMM(v) {
-    if (typeof v !== 'string') return '';
+    if (typeof v !== 'string') return null;
     const s = v.trim();
-    if (!s) return '';
+    if (!s) return null;
 
     // HH:MM 24h
     const m24 = s.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
@@ -221,15 +221,16 @@
     if (m12) {
       const hh12 = safeNumber(m12[1], NaN);
       const mm = safeNumber(m12[2], NaN);
-      if (!Number.isFinite(hh12) || !Number.isFinite(mm)) return '';
+      if (!Number.isFinite(hh12) || !Number.isFinite(mm)) return null;
       const ampm = String(m12[3]).toUpperCase();
       let hh24 = hh12 % 12;
       if (ampm === 'PM') hh24 += 12;
       return `${String(hh24).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     }
 
-    return '';
+    return null;
   }
+
 
   function parseTimeFromUIToHHMM({ hVal, mVal, ampmVal }) {
     const h = safeNumber(hVal, NaN);
@@ -363,9 +364,17 @@
       console.log('Migrated state', migrateAndMergeState(parsed));
       state = migrateAndMergeState(parsed);
 
+      // Normalize persisted alarms on every load to enforce invariant:
+      // - valid => HH:MM string
+      // - no reminder => null
+      // - never ''
+      for (const habit of state.habits || []) {
+        if (!habit || typeof habit !== 'object') continue;
+        habit.alarmTime = normalizeAlarmTimeToHHMM(habit.alarmTime);
+      }
+
       // Requirement: on app load, recalculate streak from historical completion records.
       rebuildStreakHistoryFromHabitHistory();
-
 
       seedXpLedgerFromHistory();
       try {
@@ -385,6 +394,7 @@
       state = getDefaultState();
     }
   }
+
 
 
   function save() {
@@ -763,6 +773,100 @@
     }
   }
 
+  function computeActiveHabitsAnalytics() {
+    // Single source of truth: ONLY currently active habits in state.habits
+    const keys = weekKeys();
+    const habits = state.habits || [];
+
+    const dayCompleted = keys.map(() => 0); // count of habits marked done on a day
+    const dayNotDone = keys.map(() => 0); // count of habits marked not_done on a day (explicit)
+    const dayExplicitCounts = keys.map(() => 0); // done + not_done (explicit)
+
+    // Totals across the 7-day window (these feed the dashboard metrics)
+    let totalDone = 0;
+    let totalNotDone = 0;
+
+    let bestHabit = null;
+
+    for (const habit of habits) {
+      let habitDone = 0;
+      let habitExplicit = 0;
+
+      for (let i = 0; i < keys.length; i++) {
+        const dateKey = keys[i];
+        const status = habit.history?.[dateKey];
+
+        if (status === 'done') {
+          totalDone++;
+          dayCompleted[i]++;
+          dayExplicitCounts[i]++;
+
+          habitDone++;
+          habitExplicit++;
+        } else if (status === 'not_done') {
+          totalNotDone++;
+          dayNotDone[i]++;
+          dayExplicitCounts[i]++;
+
+          habitExplicit++;
+        }
+      }
+
+      // Best habit: highest completion rate based only on explicit tracked days
+      if (habitExplicit > 0) {
+        const pct = habitDone / habitExplicit;
+        if (
+          !bestHabit ||
+          pct > bestHabit.pct ||
+          (pct === bestHabit.pct && habitDone > bestHabit.done)
+        ) {
+          bestHabit = { name: habit.name, pct, done: habitDone };
+        }
+      }
+    }
+
+    const totalHabitCount = habits.length;
+
+    // “Missed” (yellow): habits with NO stored status for that day.
+    // Rendering intent from your original code: only show missed bars on days that have explicit activity.
+    const dayHasExplicitActivity = dayExplicitCounts.map((v) => v > 0);
+    const dayMissed = dayExplicitCounts.map((explicit, i) => {
+      if (!dayHasExplicitActivity[i]) return 0;
+      return Math.max(0, totalHabitCount - explicit);
+    });
+
+    const totalMissed = dayMissed.reduce((a, b) => a + b, 0);
+
+    // Completion percentage: explicit completion only (done / (done + not_done))
+    const explicitTotal = totalDone + totalNotDone;
+    const completionPct = explicitTotal ? Math.round((totalDone / explicitTotal) * 100) : 0;
+
+    const hasAnyWeeklyData =
+      dayCompleted.some((v) => v > 0) ||
+      dayNotDone.some((v) => v > 0) ||
+      dayMissed.some((v) => v > 0);
+
+    return {
+      keys,
+      totalDone,
+      totalNotDone,
+      totalMissed,
+      bestHabitName: bestHabit ? bestHabit.name : '—',
+      completionPct,
+      dayCompleted,
+      dayNotDone,
+      dayMissed,
+      hasAnyWeeklyData,
+    };
+  }
+
+
+  function refreshDashboardAnalyticsIfVisible(els) {
+    // Ensure no cached/stale analytics: always recompute.
+    if (!els || els.currentView !== 'dashboard') return;
+    renderAnalytics(els);
+  }
+
   function renderAnalytics(els) {
     if (
       !els.analyticsTotalCompletedEl ||
@@ -774,91 +878,32 @@
     )
       return;
 
-    const keys = weekKeys();
-    const habits = state.habits || [];
 
-    let totalDone = 0;
-    let totalMissed = 0;
-    let bestHabit = null;
+    const data = computeActiveHabitsAnalytics();
 
-    const dayDoneCounts = keys.map(() => 0);
-    const dayExplicitCounts = keys.map(() => 0);
+    els.analyticsTotalCompletedEl.textContent = String(data.totalDone);
+    // Your “Missed habits” metric should count only the yellow “no explicit status” category.
+    els.analyticsMissedHabitsEl.textContent = String(data.totalMissed);
+    // “Not completed” should be explicit not_done across the week.
+    // Keep “Not completed” aligned with explicit not_done across the week.
+    if (els.analyticsNotCompletedHabitsEl) els.analyticsNotCompletedHabitsEl.textContent = String(data.totalNotDone);
 
-    // Weekly percentage calculation (chart + metric):
-    // completion% for a day = done / (done + not_done) for that dateKey across all habits.
-    for (const habit of habits) {
-      for (let i = 0; i < keys.length; i++) {
-        const dateKey = keys[i];
-        const status = habit.history?.[dateKey];
-        if (status === 'done') {
-          totalDone++;
-          dayDoneCounts[i]++;
-          dayExplicitCounts[i]++;
-        } else if (status === 'not_done') {
-          totalMissed++;
-          dayExplicitCounts[i]++;
-        }
-      }
 
-      // Best habit (kept as-is logic, only used for metric text)
-      let habitDone = 0;
-      let habitExplicit = 0;
-      keys.forEach((dateKey) => {
-        const status = habit.history?.[dateKey];
-        if (status === 'done') {
-          habitDone++;
-          habitExplicit++;
-        } else if (status === 'not_done') {
-          habitExplicit++;
-        }
-      });
+    els.analyticsBestHabitEl.textContent = data.bestHabitName;
 
-      if (habitExplicit > 0) {
-        const pct = habitDone / habitExplicit;
-        if (!bestHabit || pct > bestHabit.pct || (pct === bestHabit.pct && habitDone > bestHabit.done)) {
-          bestHabit = { name: habit.name, pct, done: habitDone };
-        }
-      }
-    }
+    els.analyticsCompletionPctEl.textContent = `${data.completionPct}%`;
 
-    const explicitTotal = totalDone + totalMissed;
-    const completionPct = explicitTotal ? Math.round((totalDone / explicitTotal) * 100) : 0;
+    els.completionPillEl.textContent = `${data.completionPct}% completion`;
 
-    els.analyticsTotalCompletedEl.textContent = String(totalDone);
-    els.analyticsMissedHabitsEl.textContent = String(totalMissed);
-    els.analyticsBestHabitEl.textContent = bestHabit ? bestHabit.name : '—';
-    els.analyticsCompletionPctEl.textContent = `${completionPct}%`;
-    els.completionPillEl.textContent = `${completionPct}% completion`;
 
-    // Weekly progress chart data (multi-metric bar dashboard)
-    // green = completed(done)
-    // red = not_done(not_done)
-    // yellow = missed habits
-    //
-    // Updated rules:
-    // - We MUST show graph only for days with meaningful recorded activity.
-    // - If a day has completed=0, not_done=0, missed=0 => leave it completely blank.
-    //
-    // Data sources are strictly habit.history entries (no invented/demo values).
-    const totalHabitCount = habits.length;
-
-    const dayCompleted = keys.map((_, i) => dayDoneCounts[i]);
-    const dayNotDone = keys.map((_, i) => Math.max(0, dayExplicitCounts[i] - dayDoneCounts[i]));
-
-    // “Missed” (yellow) is defined as habits that have NO stored status for that day.
-    // But we will only render the yellow bar when the day has explicit activity.
-    // This prevents crowding on empty days.
-    const dayHasExplicitActivity = keys.map((_, i) => dayExplicitCounts[i] > 0);
-    const dayMissed = keys.map((_, i) => {
-      if (!dayHasExplicitActivity[i]) return 0;
-      return Math.max(0, totalHabitCount - dayExplicitCounts[i]);
-    });
-
-    const hasAnyWeeklyData = dayCompleted.some((v) => v > 0) || dayNotDone.some((v) => v > 0) || dayMissed.some((v) => v > 0);
+    const keys = data.keys;
+    const dayCompleted = data.dayCompleted;
+    const dayNotDone = data.dayNotDone;
+    const dayMissed = data.dayMissed;
 
     els.weeklyBarsEl.innerHTML = '';
 
-    if (!hasAnyWeeklyData) {
+    if (!data.hasAnyWeeklyData) {
       const empty = document.createElement('div');
       empty.className = 'weekly-chart-empty';
       empty.textContent = 'No weekly data available';
@@ -866,8 +911,19 @@
       return;
     }
 
+    // Build plot + legend as separate vertical blocks to prevent overlap and layout squashing.
+    const plotEl = document.createElement('div');
+    plotEl.style.width = '100%';
+    plotEl.style.flex = '1 1 auto';
+    const legendHost = document.createElement('div');
+    legendHost.style.width = '100%';
+
+    els.weeklyBarsEl.appendChild(plotEl);
+    els.weeklyBarsEl.appendChild(legendHost);
+
     const width = 640;
     const height = 260;
+
     const pad = { l: 44, r: 16, t: 18, b: 44 };
     const plotW = width - pad.l - pad.r;
     const plotH = height - pad.t - pad.b;
@@ -876,17 +932,27 @@
 
     const maxCount = Math.max(1, ...keys.map((_, i) => dayCompleted[i] + dayNotDone[i] + dayMissed[i]));
 
-    // Bar layout
+    // Isometric faux-3D geometry (SVG only)
     const groupW = plotW / 7;
-    // Slimmer bars for a cleaner, premium look (mobile friendly)
-    const barW = Math.max(8, Math.min(16, groupW * 0.20));
-    const gap = Math.max(2, Math.floor(groupW * 0.05));
+
+    // Tile footprint sizes tuned for mobile legibility
+    const tileW = Math.max(30, Math.min(58, groupW * 0.76));
+    const tileH = Math.max(14, Math.min(28, groupW * 0.30));
+
+    // Isometric projection: horizontal skew and vertical lift
+    const isoDx = tileW * 0.32;
+    const isoDy = tileH * 0.42;
+
+    const baseY = pad.t + plotH;
 
     const colors = {
       done: 'rgba(34,197,94,.95)',
       notDone: 'rgba(239,68,68,.95)',
       missed: 'rgba(234,179,8,.95)',
       grid: 'rgba(255,255,255,.10)',
+      // Face shadings (slight variation to imply depth while keeping category meaning)
+      faceLeftAlpha: 0.92,
+      faceRightAlpha: 0.86,
     };
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -899,14 +965,13 @@
     const wrap = document.createElement('div');
     wrap.className = 'weekly-chart-wrap';
     wrap.appendChild(svg);
-    els.weeklyBarsEl.appendChild(wrap);
+    plotEl.appendChild(wrap);
 
-    const axisGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-
-    // y-axis grid + labels for habit count (0..max in 5 steps)
-    const steps = 5;
-    for (let s = 0; s <= steps; s++) {
-      const val = Math.round((maxCount * s) / steps);
+    // Subtle grid for context (kept minimal to prevent 3D clutter)
+    const gridGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const gridSteps = 4;
+    for (let s = 0; s <= gridSteps; s++) {
+      const val = Math.round((maxCount * s) / gridSteps);
       const y = pad.t + (plotH * (maxCount - val)) / maxCount;
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       line.setAttribute('x1', pad.l);
@@ -915,139 +980,196 @@
       line.setAttribute('y2', y.toFixed(2));
       line.setAttribute('stroke', colors.grid);
       line.setAttribute('stroke-width', '1');
-      axisGroup.appendChild(line);
+      gridGroup.appendChild(line);
 
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       t.setAttribute('x', pad.l - 10);
       t.setAttribute('y', (y + 4).toFixed(2));
       t.setAttribute('text-anchor', 'end');
-      t.setAttribute('fill', 'rgba(232,238,252,.65)');
+      t.setAttribute('fill', 'rgba(232,238,252,.52)');
       t.setAttribute('font-size', '11');
       t.textContent = String(val);
-      axisGroup.appendChild(t);
+      gridGroup.appendChild(t);
     }
+    svg.appendChild(gridGroup);
 
-    const baseLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    baseLine.setAttribute('x1', pad.l);
-    baseLine.setAttribute('x2', pad.l + plotW);
-    baseLine.setAttribute('y1', (pad.t + plotH).toFixed(2));
-    baseLine.setAttribute('y2', (pad.t + plotH).toFixed(2));
-    baseLine.setAttribute('stroke', 'rgba(255,255,255,.14)');
-    baseLine.setAttribute('stroke-width', '1');
-    axisGroup.appendChild(baseLine);
-
-    // x-axis labels required order
+    // Day labels under each tile (keeps existing comprehension anchors)
     for (let i = 0; i < 7; i++) {
-      const tx = pad.l + groupW * i + groupW / 2;
+      const cx = pad.l + groupW * i + groupW / 2;
       const lab = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      lab.setAttribute('x', tx.toFixed(2));
-      lab.setAttribute('y', (pad.t + plotH + 24).toFixed(2));
+      lab.setAttribute('x', cx.toFixed(2));
+      lab.setAttribute('y', (baseY + 26).toFixed(2));
       lab.setAttribute('text-anchor', 'middle');
       lab.setAttribute('fill', 'rgba(232,238,252,.75)');
       lab.setAttribute('font-size', '12');
       lab.textContent = dayLabels[i];
-      axisGroup.appendChild(lab);
+      svg.appendChild(lab);
     }
 
-    svg.appendChild(axisGroup);
-
-    // Trend line (connect daily completed totals across days)
-    const trendPts = dayCompleted.map((v, i) => {
-      const x = pad.l + groupW * i + groupW / 2;
-      const y = pad.t + (plotH * (maxCount - v)) / maxCount;
-      return { x, y };
-    });
-
-    let trendD = '';
-    for (let i = 0; i < trendPts.length; i++) {
-      const p = trendPts[i];
-      if (!trendD) trendD = `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
-      else trendD += ` L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+    function rgbaWithAlpha(rgba, alpha) {
+      // expects rgba(r,g,b,a) form; fallback to original
+      const m = rgba.match(/^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/);
+      if (!m) return rgba;
+      return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
     }
 
-    const trendPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    trendPath.setAttribute('d', trendD);
-    trendPath.setAttribute('fill', 'none');
-    trendPath.setAttribute('stroke', 'rgba(124,92,255,.95)');
-    trendPath.setAttribute('stroke-width', '2.8');
-    trendPath.setAttribute('stroke-linecap', 'round');
-    svg.appendChild(trendPath);
+    function point(x, y) {
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }
 
-    // Bars
+    // Draw isometric stacked blocks per day
     for (let i = 0; i < 7; i++) {
-      const baseY = pad.t + plotH;
-      const leftX = pad.l + groupW * i + groupW / 2;
-
       const completedVal = dayCompleted[i];
       const notDoneVal = dayNotDone[i];
       const missedVal = dayMissed[i];
 
-      // Render ONLY if the day has any recorded activity.
-      // If completed=0, notDone=0, missed=0 -> leave completely blank (no bars at all).
-      if (completedVal === 0 && notDoneVal === 0 && missedVal === 0) {
-        continue;
-      }
+      if (completedVal === 0 && notDoneVal === 0 && missedVal === 0) continue;
 
-      const values = [
-        { key: 'done', val: completedVal, color: colors.done },
-        { key: 'notDone', val: notDoneVal, color: colors.notDone },
-        { key: 'missed', val: missedVal, color: colors.missed },
+      // Tile center
+      const cx = pad.l + groupW * i + groupW / 2;
+
+      // Top/front plane anchor (bottom of isometric stack sits on baseY)
+      // Convert values to vertical stack heights in SVG space
+      const hDone = (plotH * completedVal) / maxCount;
+      const hNotDone = (plotH * notDoneVal) / maxCount;
+      const hMissed = (plotH * missedVal) / maxCount;
+
+      // Minimum visible segment height to keep tiny values discoverable
+      const minSeg = 1.5;
+      const segDone = completedVal > 0 ? Math.max(minSeg, hDone) : 0;
+      const segNotDone = notDoneVal > 0 ? Math.max(minSeg, hNotDone) : 0;
+      const segMissed = missedVal > 0 ? Math.max(minSeg, hMissed) : 0;
+
+      const totalSeg = segDone + segNotDone + segMissed;
+      const yTop = baseY - totalSeg;
+
+      // Isometric base footprint (a parallelogram)
+      const leftBaseX = cx - tileW / 2;
+      const rightBaseX = cx + tileW / 2;
+      const frontBaseY = baseY;
+      const backBaseY = baseY - isoDy;
+
+      // We will render each segment as a block from current y cursor to next y cursor
+      let cursorY = baseY;
+
+      const segments = [
+        { key: 'done', val: completedVal, color: colors.done, h: segDone },
+        { key: 'notDone', val: notDoneVal, color: colors.notDone, h: segNotDone },
+        { key: 'missed', val: missedVal, color: colors.missed, h: segMissed },
       ];
 
-      // Place bars within the group (left->right)
-      const totalBarW = 3 * barW + 2 * gap;
-      const startX = leftX - totalBarW / 2;
+      for (const seg of segments) {
+        if (seg.val <= 0) continue;
 
-      values.forEach((it, idx) => {
-        const val = it.val;
-        if (val === 0) return; // keep empty parts blank
+        const h = seg.h;
+        const segBottomY = cursorY;
+        const segTopY = cursorY - h;
 
-        const h = (plotH * val) / maxCount;
-        const x = startX + idx * (barW + gap);
-        const y = baseY - h;
+        // Project top plane points for this layer
+        const leftTopX = leftBaseX;
+        const rightTopX = rightBaseX;
 
-        const r = 7;
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', x.toFixed(2));
-        rect.setAttribute('y', y.toFixed(2));
-        rect.setAttribute('width', barW.toFixed(2));
-        rect.setAttribute('height', Math.max(0.5, h).toFixed(2));
-        rect.setAttribute('rx', r);
-        rect.setAttribute('ry', r);
-        rect.setAttribute('fill', it.color);
-        rect.setAttribute('opacity', '0.92');
-        rect.setAttribute('stroke', 'rgba(255,255,255,.16)');
-        rect.setAttribute('stroke-width', '0.8');
-        rect.setAttribute('role', 'img');
-        rect.setAttribute(
+        const frontTopY = segTopY;
+        const backTopY = segTopY - isoDy;
+
+        // Top face polygon
+        const topPoly = [
+          point(cx - tileW / 2, segTopY),
+          point(cx, segTopY - isoDy),
+          point(cx + tileW / 2, segTopY),
+          point(cx, segTopY + isoDy),
+        ];
+
+        // Left face polygon (a trapezoid)
+        const leftPoly = [
+          point(cx - tileW / 2, segBottomY),
+          point(cx, segBottomY - isoDy),
+          point(cx, frontTopY),
+          point(cx - tileW / 2, frontTopY),
+        ];
+
+        // Right face polygon (mirror)
+        const rightPoly = [
+          point(cx, segBottomY - isoDy),
+          point(cx + tileW / 2, segBottomY),
+          point(cx + tileW / 2, frontTopY),
+          point(cx, frontTopY),
+        ];
+
+        // Top highlight slightly lighter
+        const topFill = seg.color;
+        const leftFill = rgbaWithAlpha(seg.color, colors.faceLeftAlpha);
+        const rightFill = rgbaWithAlpha(seg.color, colors.faceRightAlpha);
+
+        // Top face (rendered as a polygon to avoid per-face occlusion)
+        const topFace = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        topFace.setAttribute('points', topPoly.join(' '));
+        topFace.setAttribute('fill', topFill);
+        topFace.setAttribute('opacity', '0.92');
+        topFace.setAttribute('stroke', 'rgba(255,255,255,.14)');
+        topFace.setAttribute('stroke-width', '0.8');
+        topFace.setAttribute('role', 'img');
+        topFace.setAttribute(
           'aria-label',
-          `${dayLabels[i]} ${it.key === 'done' ? 'completed' : it.key === 'notDone' ? 'not done' : 'missed'}: ${val}`
+          `${dayLabels[i]} ${seg.key === 'done' ? 'completed' : seg.key === 'notDone' ? 'not done' : 'missed'}: ${seg.val}`
         );
-        svg.appendChild(rect);
-      });
+        svg.appendChild(topFace);
+
+        const leftFace = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        leftFace.setAttribute('points', leftPoly.join(' '));
+        leftFace.setAttribute('fill', leftFill);
+        leftFace.setAttribute('opacity', '0.95');
+        leftFace.setAttribute('stroke', 'rgba(255,255,255,.12)');
+        leftFace.setAttribute('stroke-width', '0.8');
+        leftFace.setAttribute('role', 'img');
+        leftFace.setAttribute(
+          'aria-label',
+          `${dayLabels[i]} ${seg.key === 'done' ? 'completed' : seg.key === 'notDone' ? 'not done' : 'missed'}: ${seg.val}`
+        );
+        svg.appendChild(leftFace);
+
+        const rightFace = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        rightFace.setAttribute('points', rightPoly.join(' '));
+        rightFace.setAttribute('fill', rightFill);
+        rightFace.setAttribute('opacity', '0.95');
+        rightFace.setAttribute('stroke', 'rgba(255,255,255,.12)');
+        rightFace.setAttribute('stroke-width', '0.8');
+        rightFace.setAttribute('role', 'img');
+        rightFace.setAttribute(
+          'aria-label',
+          `${dayLabels[i]} ${seg.key === 'done' ? 'completed' : seg.key === 'notDone' ? 'not done' : 'missed'}: ${seg.val}`
+        );
+        svg.appendChild(rightFace);
+
+        cursorY = segTopY;
+      }
     }
 
-    // Legend (match theme)
+
     const legend = document.createElement('div');
     legend.className = 'weekly-chart-legend';
     legend.style.display = 'flex';
-    legend.style.gap = '12px';
-    legend.style.marginTop = '10px';
+    legend.style.gap = '14px';
+    legend.style.marginTop = '2px';
     legend.style.flexWrap = 'wrap';
+    legend.style.justifyContent = 'space-between';
+    legend.style.alignItems = 'center';
+    legend.style.padding = '0 6px';
     legend.innerHTML = `
-      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;">
+      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;white-space:nowrap;">
         <span style="width:10px;height:10px;border-radius:3px;background:${colors.done};display:inline-block;"></span> 🟢 Completed
       </span>
-      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;">
+      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;white-space:nowrap;">
         <span style="width:10px;height:10px;border-radius:3px;background:${colors.notDone};display:inline-block;"></span> 🔴 Not Done
       </span>
-      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;">
+      <span style="display:flex;align-items:center;gap:8px;color:rgba(232,238,252,.9);font-weight:900;font-size:12px;white-space:nowrap;">
         <span style="width:10px;height:10px;border-radius:3px;background:${colors.missed};display:inline-block;"></span> 🟡 Missed
       </span>
     `;
 
-    els.weeklyBarsEl.appendChild(legend);
+    legendHost.appendChild(legend);
   }
+
 
   function renderWeekly(els) {
     if (!els.weekRangePill || !els.weeklyTable) return;
@@ -2330,8 +2452,11 @@
 
       analyticsTotalCompletedEl: $('analyticsTotalCompleted'),
       analyticsMissedHabitsEl: $('analyticsMissedHabits'),
+      analyticsNotCompletedHabitsEl: $('analyticsNotCompletedHabits') || null,
+
       analyticsBestHabitEl: $('analyticsBestHabit'),
       analyticsCompletionPctEl: $('analyticsCompletionPct'),
+
       completionPillEl: $('completionPill'),
       weeklyBarsEl: $('weeklyBars'),
 

@@ -1,8 +1,11 @@
-- [x] UI: Toggle weekday picker visibility when reminder type changes (Daily vs Specific Days)
-- [x] Data model: Persist selected weekdays on habit creation (store as habit-selected weekdays)
-- [x] Migration: Default missing weekday data to Daily (all 7 days)
-- [x] Scheduler: Enforce weekday filter before triggering alarms (including snooze override path)
-- [ ] Manual verification: Sunday only, Mon/Wed/Fri, All days selected
-- [ ] Reporting: list modified files + show exact habit weekday data structure
+# TODO
+
+## HabitTracker bugfixes
+
+- [x] A) Fix inflated analytics metrics by rewriting `computeActiveHabitsAnalytics()` so totals are derived consistently from the same 7-day tracking arrays.
+- [x] B) Fix weekly chart rendering layout collapse/legend overlap by making SVG sizing deterministic and separating plot area from legend.
+- [x] C) Update CSS (`style.css`) for stable chart height/box sizing and legend positioning.
+- [ ] D) Verify dashboard analytics numbers match the weekly chart visually on different screen sizes.
+
 
 
