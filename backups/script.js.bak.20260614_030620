@@ -738,19 +738,9 @@
         delBtn.setAttribute('aria-label', `Move ${habit.name} to Recycle Bin`);
         delBtn.dataset.action = 'deleteHabit';
 
-        const remBtn = document.createElement('button');
-        remBtn.type = 'button';
-        remBtn.className = 'ghost-btn';
-        remBtn.textContent = (habit?.reminder?.enabled) ? '🔔 ON' : '🔕 OFF';
-        remBtn.title = 'Toggle reminders';
-        remBtn.setAttribute('aria-label', `Toggle reminders for ${habit.name}`);
-        remBtn.dataset.action = 'toggleReminder';
-
         actions.appendChild(doneBtn);
         actions.appendChild(ndBtn);
-        actions.appendChild(remBtn);
         actions.appendChild(delBtn);
-
 
         item.appendChild(left);
         item.appendChild(actions);
@@ -1743,102 +1733,7 @@
 
   let alarmTimerHandle = null;
 
-  // Midnight rollover re-render interval handle (for duplication safety)
-  let midnightRolloverTimerHandle = null;
-
-
-  // =============================
-  // Reminder scheduler (UI-only reminders; no modal/audio interaction)
-  // =============================
-  let reminderTimerHandle = null;
-  const REMINDER_CHECK_MS = 15000; // periodic scan
-  const REMINDER_GRACE_MS = 10 * 60 * 1000; // match missed-alarm behavior
-
-  function reminderWeekdayMatches(habit, now) {
-    const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const selected =
-      Array.isArray(habit?.alarmWeekdaysSelected) && habit.alarmWeekdaysSelected.length
-        ? habit.alarmWeekdaysSelected
-        : allWeekdays;
-    const map = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const todayName = map[now.getDay()];
-    return selected.includes(todayName);
-  }
-
-  function shouldTriggerReminder(habit, now) {
-    if (!habit?.alarmTime) return false;
-    if (!(habit?.reminder && !!habit.reminder.enabled)) return false;
-    if (!reminderWeekdayMatches(habit, now)) return false;
-
-    // do not trigger while alarm modal open (keeps UX consistent)
-    if (state?.meta?.alarmRuntime?._modalOpen) return false;
-
-    return true;
-  }
-
-  function startReminderScheduler(els) {
-    if (reminderTimerHandle) return;
-
-    ensureStateShape();
-    state.meta.reminderRuntime = state.meta.reminderRuntime || {
-      _lastFiredDayByHabit: {}, // habitId -> YYYY-MM-DD
-    };
-
-    const tick = () => {
-      try {
-        const now = new Date();
-        const nowMs = now.getTime();
-        const tKey = todayKey(now);
-
-        for (const habit of state.habits || []) {
-          const habitId = habit?.id;
-          if (!habitId) continue;
-          if (!shouldTriggerReminder(habit, now)) continue;
-
-          // De-dupe once per day per habit
-          const lastDay = state.meta.reminderRuntime._lastFiredDayByHabit[habitId];
-          if (lastDay === tKey) continue;
-
-          const alarmTime = normalizeAlarmTimeToHHMM(habit.alarmTime);
-          if (!alarmTime || !/^\d{2}:\d{2}$/.test(alarmTime)) continue;
-
-          const [hhStr, mmStr] = alarmTime.split(':');
-          const hh = Number(hhStr);
-          const mm = Number(mmStr);
-          if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
-
-          const scheduled = new Date(now);
-          scheduled.setHours(hh, mm, 0, 0);
-          const scheduledMs = scheduled.getTime();
-
-          // due if now >= scheduled
-          const isDue = nowMs >= scheduledMs;
-          const isNotTooLate = nowMs - scheduledMs <= REMINDER_GRACE_MS;
-          if (!isDue || !isNotTooLate) continue;
-
-          state.meta.reminderRuntime._lastFiredDayByHabit[habitId] = tKey;
-
-          // Visual notification: toggle missed warning element if present, else just log.
-          // (No requirement for a specific UI element; safe fallback.)
-          const msg = `Reminder: ${habit.name}`;
-          console.log('[reminder]', msg);
-          if (els?.reminderToastEl) {
-            els.reminderToastEl.textContent = msg;
-            els.reminderToastEl.classList.add('is-show');
-            setTimeout(() => els.reminderToastEl.classList.remove('is-show'), 3500);
-          }
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    tick();
-    reminderTimerHandle = setInterval(tick, REMINDER_CHECK_MS);
-  }
-
   function startAlarmScheduler(els) {
-
     if (alarmTimerHandle) return;
 
     // initialize runtime flags
@@ -2048,17 +1943,13 @@
   // Habits create/update
   // =============================
 
-  function addHabit({ name, targetDays, alarmTimeHHMM, alarmSound, alarmWeekdaysSelected, reminderEnabled }) {
+  function addHabit({ name, targetDays, alarmTimeHHMM, alarmSound, alarmWeekdaysSelected }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
     const aSound = Math.max(1, Math.min(4, Number(alarmSound) || 1));
-
-    const reminderOn = !!reminderEnabled;
-
 
     const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const picked = Array.isArray(alarmWeekdaysSelected) ? alarmWeekdaysSelected : null;
     const alarmWeekdays = picked && picked.length ? picked.filter((d) => allWeekdays.includes(d)) : allWeekdays;
-
 
     state.habits.unshift({
       id,
@@ -2359,106 +2250,10 @@
         return;
       }
 
-      if (action === 'toggleReminder') {
-        const habit = state.habits.find((h) => h.id === habitId);
-        if (!habit) return;
-
-        // Open dropdown anchored near the clicked button.
-        // Minimal UI: create a small menu once per click.
-        const anchor = btn;
-        const existing = document.querySelector('.reminder-quickmenu');
-        existing?.remove();
-
-        const menu = document.createElement('div');
-        menu.className = 'reminder-quickmenu';
-        menu.style.position = 'absolute';
-        menu.style.zIndex = '9999';
-        menu.style.minWidth = '160px';
-        menu.style.padding = '8px';
-        menu.style.borderRadius = '14px';
-        menu.style.border = '1px solid rgba(255,255,255,.10)';
-        menu.style.background = 'rgba(15,23,42,.92)';
-        menu.style.backdropFilter = 'blur(10px)';
-        menu.style.boxShadow = '0 10px 30px rgba(0,0,0,.35)';
-
-        const rect = anchor.getBoundingClientRect();
-        const top = rect.bottom + 6 + window.scrollY;
-        const left = rect.left + window.scrollX;
-        menu.style.top = `${top}px`;
-        menu.style.left = `${left}px`;
-
-        function mkItem(label, enabledValue) {
-          const it = document.createElement('button');
-          it.type = 'button';
-          it.className = 'ghost-btn';
-          it.style.width = '100%';
-          it.style.justifyContent = 'flex-start';
-          it.style.display = 'flex';
-          it.style.gap = '10px';
-          it.style.margin = '0';
-          it.style.padding = '10px 12px';
-          it.textContent = label;
-          it.dataset.reminderEnabled = String(enabledValue);
-          return it;
-        }
-
-        const offIt = mkItem('🔕 Alarm OFF', false);
-        const onIt = mkItem('🔔 Alarm ON', true);
-
-        const close = () => {
-          menu.remove();
-          document.removeEventListener('click', onDocClick, true);
-        };
-
-        const onDocClick = (evt) => {
-          const t = evt.target;
-          if (menu.contains(t) || anchor.contains(t)) return;
-          close();
-        };
-
-        document.addEventListener('click', onDocClick, true);
-
-        function applyReminderEnabled(enabledValue) {
-          habit.reminder = habit.reminder && typeof habit.reminder === 'object' ? habit.reminder : {};
-          habit.reminder.enabled = !!enabledValue;
-
-          // Keep existing behavior: if enabling but alarmTime invalid, auto-disable.
-          const hasAlarm = typeof habit.alarmTime === 'string' && habit.alarmTime.trim() && /^\d{2}:\d{2}$/.test(habit.alarmTime);
-          if (habit.reminder.enabled && !hasAlarm) habit.reminder.enabled = false;
-
-          save();
-          close();
-
-          // Refresh UI immediately to reflect 🔔 ON / 🔕 OFF state.
-          renderDashboard(els);
-          if (els.currentView === 'weekly') renderWeekly(els);
-          if (els.currentView === 'monthly') renderMonthly(els);
-        }
-
-        offIt.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          applyReminderEnabled(false);
-        });
-
-        onIt.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          applyReminderEnabled(true);
-        });
-
-        menu.appendChild(offIt);
-        menu.appendChild(document.createElement('div')).style.height = '6px';
-        menu.appendChild(onIt);
-
-        document.body.appendChild(menu);
-        return;
-      }
-
-
       if (action === 'setStatus') {
         const status = btn.dataset.status;
         const habit = state.habits.find((h) => h.id === habitId);
         if (!habit) return;
-
 
         const view = els.currentView || 'dashboard';
         if (view === 'monthly') {
@@ -2588,13 +2383,9 @@
   }
 
   function init() {
-    // Singleton init guard (prevents duplicate timers/listeners/observers on re-init)
-    if (window.__HABIT_TRACKER_APP_INIT__) return;
-    window.__HABIT_TRACKER_APP_INIT__ = true;
 
     // Ensure weekday picker matches current default (Specific Days => visible)
     // after modal open/reset.
-
 
     const els = {
 
@@ -2744,12 +2535,8 @@
       }
     }, 30000);
 
-    // Reminder scheduler (separate from the existing alarm modal/audio scheduler)
-    startReminderScheduler(els);
-
     startAlarmScheduler(els);
   }
-
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
   else init();

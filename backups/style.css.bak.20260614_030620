@@ -162,22 +162,13 @@ input:focus-visible{
   gap:16px;
   align-items:start;
 }
-  .grid--two{grid-template-columns: 1fr 1fr}
+.grid--two{grid-template-columns: 1fr 1fr}
 
 /* Ensure dashboard extra cards wrap nicely */
 #view-dashboard .grid{
   grid-template-columns: 1fr 1fr;
 }
 #view-dashboard .card--wide{grid-column: 1 / -1}
-
-/* Mobile: prevent Recycle Bin/Open from leaving an empty flex/grid gap. */
-#view-trash .card--wide,
-#view-settings .card--wide{
-  min-height:0;
-}
-
-
-
 
 .view{transition:opacity .15s ease}
 .view.is-hidden{display:none}
@@ -444,9 +435,7 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 @media (max-width: 820px){
   .app{grid-template-columns: 1fr;}
   .sidebar{display:none;}
-  .main{padding:14px 14px 12px; min-height:auto;}
-
-
+  .main{padding:14px; min-height:100vh;}
   .grid{grid-template-columns: 1fr;}
   .grid--two{grid-template-columns: 1fr;}
   #view-dashboard .grid{grid-template-columns: 1fr;}
@@ -483,38 +472,17 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
     cursor:pointer;
   }
 
-.mobile-nav{
+  .mobile-nav{
     width:100%;
     display:flex;
     flex-direction:column;
     gap:8px;
-
-    /* Remove from normal document flow to prevent pushing content down */
-    position:absolute;
-    left:0;
-    right:0;
-    top:100%;
-
     margin-top:10px;
-    padding:0 14px;
-
     max-height:0;
     overflow:hidden;
-    visibility:hidden;
-    transition:max-height .18s ease, visibility 0s linear .18s;
+    transition:max-height .18s ease;
   }
-
-  .mobile-nav.is-open{
-    max-height:320px;
-    visibility:visible;
-    transition:max-height .18s ease, visibility 0s;
-  }
-
-
-
-  /* Ensure menu starts CLOSED even if an .is-open class is present initially in HTML */
-
-
+  .mobile-nav.is-open{max-height:360px;}
   .mobile-nav .nav-item{width:100%;}
 
   /* Ensure mobile views don't overlap any fixed containers */
@@ -576,137 +544,4 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 
 /* Prevent horizontal scrolling from any accidental widths */
 *{max-width:100%}
-
-/* ===============================
-   Auth Overlay (Phase 1)
-   - UI-only, hidden by default
-   - Must not interfere with habit core UI
-   =============================== */
-
-.auth-overlay{
-  position:fixed;
-  inset:0;
-  display:none;
-  z-index:60;
-}
-
-/* STEP 2A (UI ONLY): OTP scaffolding */
-.auth-field{display:flex;flex-direction:column;gap:8px;}
-.auth-field-label{font-weight:800;color:var(--muted);font-size:12px;}
-.auth-otp-actions{display:flex;gap:10px;flex-wrap:wrap;}
-.auth-status{min-height:18px;color:rgba(232,238,252,.85);font-size:12px;font-weight:800;}
-
-/* STEP 2C: Auth state badge */
-.auth-badge{
-  padding:8px 12px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.12);
-  background:rgba(255,255,255,.03);
-}
-.auth-badge-dot{opacity:.95}
-
-
-
-
-.auth-overlay.is-open{
-  display:block;
-}
-
-.auth-overlay-backdrop{
-  position:absolute;
-  inset:0;
-  background:rgba(0,0,0,.62);
-}
-
-.auth-overlay-card{
-  position:relative;
-  margin: 16px auto;
-  width: min(540px, calc(100% - 32px));
-  top: 50%;
-  transform: translateY(-50%);
-  background:rgba(15,23,42,.98);
-  border:1px solid rgba(255,255,255,.16);
-  border-radius:22px;
-  padding:18px;
-  color:var(--text);
-  box-shadow:0 18px 60px rgba(0,0,0,.45);
-}
-
-.auth-overlay-head{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:12px;
-  margin-bottom:12px;
-}
-
-.auth-overlay-kicker{
-  font-size:12px;
-  font-weight:900;
-  color: rgba(147,197,253,.95);
-  letter-spacing: .2px;
-}
-
-.auth-overlay-title{
-  font-weight:1000;
-  font-size:18px;
-  margin-top:6px;
-}
-
-.auth-overlay-sub{
-  color:var(--muted);
-  font-size:12px;
-  margin-top:6px;
-  line-height:1.4;
-}
-
-.auth-overlay-body{
-  display:flex;
-  flex-direction:column;
-  gap:14px;
-}
-
-.auth-actions{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
-
-.auth-divider{
-  height:1px;
-  background:rgba(255,255,255,.10);
-}
-
-.auth-optin{
-  padding:12px 14px;
-  border-radius:16px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.03);
-}
-
-.auth-optin-title{
-  font-weight:1000;
-}
-
-.auth-optin-sub{
-  color:var(--muted);
-  font-size:12px;
-  margin-top:6px;
-  line-height:1.4;
-  margin-bottom:12px;
-}
-
-.auth-btn{width:100%;}
-
-.auth-status{
-  min-height:18px;
-  color: rgba(232,238,252,.85);
-  font-size:12px;
-  font-weight:800;
-}
-
-@media (max-width: 480px){
-  .auth-overlay-card{padding:16px;}
-}
-
 

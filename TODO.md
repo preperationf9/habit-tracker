@@ -1,11 +1,15 @@
-# TODO
+# Task TODO: Reminder OFF feature (per habit)
 
-## HabitTracker bugfixes
+## Plan checkpoints
+- [ ] 1) Update habit data model: add `habit.reminder = { enabled: boolean }` with defaults.
+- [ ] 2) Add per-habit UI toggle button “Reminder ON / OFF” in `renderDashboard()`.
+- [ ] 3) Wire toggle handler in `bindEvents()` to set `habit.reminder.enabled` and `save()`.
+- [ ] 4) Implement a **separate reminder scheduler** (new code) that fires reminders only when `habit.reminder.enabled === true`.
+- [ ] 5) Implement immediate cancel on OFF: cancel only reminder timers for that habit and clear any queued reminder triggers.
+- [ ] 6) Ensure re-enable reschedules fresh reminders without duplicates.
+- [ ] 7) Add minimal UI refresh so button label reflects current state.
 
-- [x] A) Fix inflated analytics metrics by rewriting `computeActiveHabitsAnalytics()` so totals are derived consistently from the same 7-day tracking arrays.
-- [x] B) Fix weekly chart rendering layout collapse/legend overlap by making SVG sizing deterministic and separating plot area from legend.
-- [x] C) Update CSS (`style.css`) for stable chart height/box sizing and legend positioning.
-- [ ] D) Verify dashboard analytics numbers match the weekly chart visually on different screen sizes.
-
-
+## Test
+- [ ] Manual test: turn OFF → no reminders fire; alarms continue working.
+- [ ] Manual test: turn ON again → reminders fire once (no duplicates).
 

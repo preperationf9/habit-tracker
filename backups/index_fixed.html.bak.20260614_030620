@@ -14,7 +14,6 @@
 <body>
   <div class="app">
     <aside class="sidebar" aria-label="Sidebar">
-
       <div class="side-top">
         <div class="brand">
           <div class="logo">✓</div>
@@ -67,14 +66,8 @@
             <div class="streak-label">streak</div>
           </div>
 
-          <div class="auth-badge" id="authStateBadge" aria-live="polite" style="display:none;align-items:center;gap:8px;">
-            <span class="auth-badge-dot" aria-hidden="true" style="width:10px;height:10px;border-radius:999px;background:rgba(124,92,255,.95);display:inline-block;"></span>
-            <span class="auth-badge-text" id="authStateBadgeText" style="font-weight:900;font-size:12px;color:rgba(232,238,252,.9)">Guest</span>
-          </div>
-
           <button class="glow-btn" id="newHabitBtn" type="button">+ Add habit</button>
         </div>
-
 
         <nav class="mobile-nav" id="mobileNav" aria-label="Mobile navigation">
           <button class="nav-item" data-view="dashboard" type="button">Dashboard</button>
@@ -540,7 +533,7 @@
     <a href="privacy.html" style="color:#93c5fd;text-decoration:none">Privacy Policy</a>
   </footer>
 
-  <script type="module" src="script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
 
