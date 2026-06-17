@@ -117,7 +117,10 @@ input:focus-visible{
   outline-offset:3px;
 }
 
-.hamburger,
+/* Keep hamburger visible on desktop; only mobile nav dropdown stays hidden until toggle */
+.hamburger{
+  display:none;
+}
 .mobile-nav{
   display:none;
 }

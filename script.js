@@ -1743,10 +1743,6 @@
 
   let alarmTimerHandle = null;
 
-  // Midnight rollover re-render interval handle (for duplication safety)
-  let midnightRolloverTimerHandle = null;
-
-
   // =============================
   // Reminder scheduler (UI-only reminders; no modal/audio interaction)
   // =============================
@@ -2363,96 +2359,25 @@
         const habit = state.habits.find((h) => h.id === habitId);
         if (!habit) return;
 
-        // Open dropdown anchored near the clicked button.
-        // Minimal UI: create a small menu once per click.
-        const anchor = btn;
-        const existing = document.querySelector('.reminder-quickmenu');
-        existing?.remove();
+        habit.reminder = habit.reminder && typeof habit.reminder === 'object' ? habit.reminder : {};
 
-        const menu = document.createElement('div');
-        menu.className = 'reminder-quickmenu';
-        menu.style.position = 'absolute';
-        menu.style.zIndex = '9999';
-        menu.style.minWidth = '160px';
-        menu.style.padding = '8px';
-        menu.style.borderRadius = '14px';
-        menu.style.border = '1px solid rgba(255,255,255,.10)';
-        menu.style.background = 'rgba(15,23,42,.92)';
-        menu.style.backdropFilter = 'blur(10px)';
-        menu.style.boxShadow = '0 10px 30px rgba(0,0,0,.35)';
+        // Toggle runtime reminder enabled flag.
+        habit.reminder.enabled = !!habit.reminder.enabled ? false : true;
 
-        const rect = anchor.getBoundingClientRect();
-        const top = rect.bottom + 6 + window.scrollY;
-        const left = rect.left + window.scrollX;
-        menu.style.top = `${top}px`;
-        menu.style.left = `${left}px`;
-
-        function mkItem(label, enabledValue) {
-          const it = document.createElement('button');
-          it.type = 'button';
-          it.className = 'ghost-btn';
-          it.style.width = '100%';
-          it.style.justifyContent = 'flex-start';
-          it.style.display = 'flex';
-          it.style.gap = '10px';
-          it.style.margin = '0';
-          it.style.padding = '10px 12px';
-          it.textContent = label;
-          it.dataset.reminderEnabled = String(enabledValue);
-          return it;
+        // If enabling reminders but alarmTime is invalid/missing, auto-disable to avoid silent UI.
+        const hasAlarm = typeof habit.alarmTime === 'string' && habit.alarmTime.trim() && /^\d{2}:\d{2}$/.test(habit.alarmTime);
+        if (habit.reminder.enabled && !hasAlarm) {
+          habit.reminder.enabled = false;
         }
 
-        const offIt = mkItem('🔕 Alarm OFF', false);
-        const onIt = mkItem('🔔 Alarm ON', true);
+        save();
 
-        const close = () => {
-          menu.remove();
-          document.removeEventListener('click', onDocClick, true);
-        };
-
-        const onDocClick = (evt) => {
-          const t = evt.target;
-          if (menu.contains(t) || anchor.contains(t)) return;
-          close();
-        };
-
-        document.addEventListener('click', onDocClick, true);
-
-        function applyReminderEnabled(enabledValue) {
-          habit.reminder = habit.reminder && typeof habit.reminder === 'object' ? habit.reminder : {};
-          habit.reminder.enabled = !!enabledValue;
-
-          // Keep existing behavior: if enabling but alarmTime invalid, auto-disable.
-          const hasAlarm = typeof habit.alarmTime === 'string' && habit.alarmTime.trim() && /^\d{2}:\d{2}$/.test(habit.alarmTime);
-          if (habit.reminder.enabled && !hasAlarm) habit.reminder.enabled = false;
-
-          save();
-          close();
-
-          // Refresh UI immediately to reflect 🔔 ON / 🔕 OFF state.
-          renderDashboard(els);
-          if (els.currentView === 'weekly') renderWeekly(els);
-          if (els.currentView === 'monthly') renderMonthly(els);
-        }
-
-        offIt.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          applyReminderEnabled(false);
-        });
-
-        onIt.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          applyReminderEnabled(true);
-        });
-
-        menu.appendChild(offIt);
-        menu.appendChild(document.createElement('div')).style.height = '6px';
-        menu.appendChild(onIt);
-
-        document.body.appendChild(menu);
+        // Refresh view to update 🔔 ON/OFF label.
+        if (view === 'dashboard') renderDashboard(els);
+        else if (view === 'weekly') renderWeekly(els);
+        else if (view === 'monthly') renderMonthly(els);
         return;
       }
-
 
       if (action === 'setStatus') {
         const status = btn.dataset.status;
@@ -2588,13 +2513,9 @@
   }
 
   function init() {
-    // Singleton init guard (prevents duplicate timers/listeners/observers on re-init)
-    if (window.__HABIT_TRACKER_APP_INIT__) return;
-    window.__HABIT_TRACKER_APP_INIT__ = true;
 
     // Ensure weekday picker matches current default (Specific Days => visible)
     // after modal open/reset.
-
 
     const els = {
 

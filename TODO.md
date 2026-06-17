@@ -1,15 +1,9 @@
-# Task TODO: Reminder OFF feature (per habit)
+# TODO (HabitTracker)
 
-## Plan checkpoints
-- [ ] 1) Update habit data model: add `habit.reminder = { enabled: boolean }` with defaults.
-- [ ] 2) Add per-habit UI toggle button “Reminder ON / OFF” in `renderDashboard()`.
-- [ ] 3) Wire toggle handler in `bindEvents()` to set `habit.reminder.enabled` and `save()`.
-- [ ] 4) Implement a **separate reminder scheduler** (new code) that fires reminders only when `habit.reminder.enabled === true`.
-- [ ] 5) Implement immediate cancel on OFF: cancel only reminder timers for that habit and clear any queued reminder triggers.
-- [ ] 6) Ensure re-enable reschedules fresh reminders without duplicates.
-- [ ] 7) Add minimal UI refresh so button label reflects current state.
-
-## Test
-- [ ] Manual test: turn OFF → no reminders fire; alarms continue working.
-- [ ] Manual test: turn ON again → reminders fire once (no duplicates).
+- [ ] Fix hamburger (☰) click non-responsive on mobile nav.
+  - [ ] Add robust element lookup for `#menuBtn` + `#mobileNav`.
+  - [ ] Add null-check guard so toggle code runs only when elements exist.
+  - [ ] Add minimal debug logs: log click + current class state.
+  - [ ] Ensure mobileNav closes after selecting a nav item (optional quality).
+- [ ] Test manually: responsive width <= 820px, click ☰, verify mobile menu opens.
 
