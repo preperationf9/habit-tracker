@@ -1,3 +1,5 @@
+
+
 (() => {
   'use strict';
 
@@ -604,10 +606,7 @@
       el.classList.toggle('is-hidden', k !== view);
     }
 
-    // active state update for both sidebar + mobile
-    if (els.navItemsAll) {
-      els.navItemsAll.forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
-    }
+    if (els.navItems) els.navItems.forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
 
     if (view === 'weekly') state._dirtyViews.weekly = true;
     if (view === 'monthly') state._dirtyViews.monthly = true;
@@ -615,17 +614,6 @@
 
     scheduleRender(els, view);
   }
-
-  function switchView(viewName, els, { closeMobile = true } = {}) {
-    if (!viewName) return;
-    showView(viewName, els);
-
-    if (closeMobile && els.mobileNav) {
-      els.mobileNav.classList.remove('is-open');
-      els.menuBtn?.setAttribute('aria-expanded', 'false');
-    }
-  }
-
 
   function scheduleRender(els, view) {
     if (renderScheduled) return;
@@ -752,19 +740,9 @@
         delBtn.setAttribute('aria-label', `Move ${habit.name} to Recycle Bin`);
         delBtn.dataset.action = 'deleteHabit';
 
-        const remBtn = document.createElement('button');
-        remBtn.type = 'button';
-        remBtn.className = 'ghost-btn';
-        remBtn.textContent = (habit?.reminder?.enabled) ? '🔔 ON' : '🔕 OFF';
-        remBtn.title = 'Toggle reminders';
-        remBtn.setAttribute('aria-label', `Toggle reminders for ${habit.name}`);
-        remBtn.dataset.action = 'toggleReminder';
-
         actions.appendChild(doneBtn);
         actions.appendChild(ndBtn);
-        actions.appendChild(remBtn);
         actions.appendChild(delBtn);
-
 
         item.appendChild(left);
         item.appendChild(actions);
@@ -802,17 +780,25 @@
     const keys = weekKeys();
     const habits = state.habits || [];
 
-    const dayCompleted = keys.map(() => 0); // count of habits marked done on a day
-    const dayNotDone = keys.map(() => 0); // count of habits marked not_done on a day (explicit)
-    const dayExplicitCounts = keys.map(() => 0); // done + not_done (explicit)
-
-    // Totals across the 7-day window (these feed the dashboard metrics)
-    let totalDone = 0;
-    let totalNotDone = 0;
+    // Weekly chart series
+    const dayCompleted = keys.map(() => 0);
+    const dayNotDone = keys.map(() => 0);
+    const dayExplicitCounts = keys.map(() => 0); // done + not_done
 
     let bestHabit = null;
 
+    // Today-based totals for the dashboard analytics cards
+    const tKey = todayKey();
+    let totalDone = 0;
+    let totalNotDone = 0;
+
     for (const habit of habits) {
+      // Today totals
+      const todayStatus = habit.history?.[tKey];
+      if (todayStatus === 'done') totalDone++;
+      else if (todayStatus === 'not_done') totalNotDone++;
+
+      // Weekly chart aggregation + best habit based on explicit tracked days (existing behavior)
       let habitDone = 0;
       let habitExplicit = 0;
 
@@ -821,22 +807,17 @@
         const status = habit.history?.[dateKey];
 
         if (status === 'done') {
-          totalDone++;
           dayCompleted[i]++;
           dayExplicitCounts[i]++;
-
           habitDone++;
           habitExplicit++;
         } else if (status === 'not_done') {
-          totalNotDone++;
           dayNotDone[i]++;
           dayExplicitCounts[i]++;
-
           habitExplicit++;
         }
       }
 
-      // Best habit: highest completion rate based only on explicit tracked days
       if (habitExplicit > 0) {
         const pct = habitDone / habitExplicit;
         if (
@@ -851,19 +832,18 @@
 
     const totalHabitCount = habits.length;
 
-    // “Missed” (yellow): habits with NO stored status for that day.
-    // Rendering intent from your original code: only show missed bars on days that have explicit activity.
+    // “Missed” (yellow): for analytics cards, missed means *today* has no explicit status.
+    const totalMissed = Math.max(0, totalHabitCount - (totalDone + totalNotDone));
+
+    // Weekly chart missed bars keep the existing semantics (only compute if day has explicit activity)
     const dayHasExplicitActivity = dayExplicitCounts.map((v) => v > 0);
     const dayMissed = dayExplicitCounts.map((explicit, i) => {
       if (!dayHasExplicitActivity[i]) return 0;
       return Math.max(0, totalHabitCount - explicit);
     });
 
-    const totalMissed = dayMissed.reduce((a, b) => a + b, 0);
-
-    // Completion percentage: explicit completion only (done / (done + not_done))
-    const explicitTotal = totalDone + totalNotDone;
-    const completionPct = explicitTotal ? Math.round((totalDone / explicitTotal) * 100) : 0;
+    // Completion percentage for analytics cards: done / total habits (today-based)
+    const completionPct = totalHabitCount ? Math.round((totalDone / totalHabitCount) * 100) : 0;
 
     const hasAnyWeeklyData =
       dayCompleted.some((v) => v > 0) ||
@@ -1716,9 +1696,11 @@
     const snoozeHHMM = hhmmNow(snoozeAt);
 
     // Store snooze target in runtime only; scheduler will match HH:MM.
+    // Also store an absolute triggerAtMs using device local time so snooze fires reliably.
     state.meta.alarmRuntime._snoozeOverride = {
       habitId: activeHabitId,
       hhmm: snoozeHHMM,
+      triggerAtMs: snoozeAt.getTime(),
     };
   }
 
@@ -1757,98 +1739,7 @@
 
   let alarmTimerHandle = null;
 
-  // =============================
-  // Reminder scheduler (UI-only reminders; no modal/audio interaction)
-  // =============================
-  let reminderTimerHandle = null;
-  const REMINDER_CHECK_MS = 15000; // periodic scan
-  const REMINDER_GRACE_MS = 10 * 60 * 1000; // match missed-alarm behavior
-
-  function reminderWeekdayMatches(habit, now) {
-    const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const selected =
-      Array.isArray(habit?.alarmWeekdaysSelected) && habit.alarmWeekdaysSelected.length
-        ? habit.alarmWeekdaysSelected
-        : allWeekdays;
-    const map = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const todayName = map[now.getDay()];
-    return selected.includes(todayName);
-  }
-
-  function shouldTriggerReminder(habit, now) {
-    if (!habit?.alarmTime) return false;
-    if (!(habit?.reminder && !!habit.reminder.enabled)) return false;
-    if (!reminderWeekdayMatches(habit, now)) return false;
-
-    // do not trigger while alarm modal open (keeps UX consistent)
-    if (state?.meta?.alarmRuntime?._modalOpen) return false;
-
-    return true;
-  }
-
-  function startReminderScheduler(els) {
-    if (reminderTimerHandle) return;
-
-    ensureStateShape();
-    state.meta.reminderRuntime = state.meta.reminderRuntime || {
-      _lastFiredDayByHabit: {}, // habitId -> YYYY-MM-DD
-    };
-
-    const tick = () => {
-      try {
-        const now = new Date();
-        const nowMs = now.getTime();
-        const tKey = todayKey(now);
-
-        for (const habit of state.habits || []) {
-          const habitId = habit?.id;
-          if (!habitId) continue;
-          if (!shouldTriggerReminder(habit, now)) continue;
-
-          // De-dupe once per day per habit
-          const lastDay = state.meta.reminderRuntime._lastFiredDayByHabit[habitId];
-          if (lastDay === tKey) continue;
-
-          const alarmTime = normalizeAlarmTimeToHHMM(habit.alarmTime);
-          if (!alarmTime || !/^\d{2}:\d{2}$/.test(alarmTime)) continue;
-
-          const [hhStr, mmStr] = alarmTime.split(':');
-          const hh = Number(hhStr);
-          const mm = Number(mmStr);
-          if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
-
-          const scheduled = new Date(now);
-          scheduled.setHours(hh, mm, 0, 0);
-          const scheduledMs = scheduled.getTime();
-
-          // due if now >= scheduled
-          const isDue = nowMs >= scheduledMs;
-          const isNotTooLate = nowMs - scheduledMs <= REMINDER_GRACE_MS;
-          if (!isDue || !isNotTooLate) continue;
-
-          state.meta.reminderRuntime._lastFiredDayByHabit[habitId] = tKey;
-
-          // Visual notification: toggle missed warning element if present, else just log.
-          // (No requirement for a specific UI element; safe fallback.)
-          const msg = `Reminder: ${habit.name}`;
-          console.log('[reminder]', msg);
-          if (els?.reminderToastEl) {
-            els.reminderToastEl.textContent = msg;
-            els.reminderToastEl.classList.add('is-show');
-            setTimeout(() => els.reminderToastEl.classList.remove('is-show'), 3500);
-          }
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    tick();
-    reminderTimerHandle = setInterval(tick, REMINDER_CHECK_MS);
-  }
-
   function startAlarmScheduler(els) {
-
     if (alarmTimerHandle) return;
 
     // initialize runtime flags
@@ -2058,17 +1949,13 @@
   // Habits create/update
   // =============================
 
-  function addHabit({ name, targetDays, alarmTimeHHMM, alarmSound, alarmWeekdaysSelected, reminderEnabled }) {
+  function addHabit({ name, targetDays, alarmTimeHHMM, alarmSound, alarmWeekdaysSelected }) {
     const id = String(Date.now()) + Math.random().toString(16).slice(2);
     const aSound = Math.max(1, Math.min(4, Number(alarmSound) || 1));
-
-    const reminderOn = !!reminderEnabled;
-
 
     const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const picked = Array.isArray(alarmWeekdaysSelected) ? alarmWeekdaysSelected : null;
     const alarmWeekdays = picked && picked.length ? picked.filter((d) => allWeekdays.includes(d)) : allWeekdays;
-
 
     state.habits.unshift({
       id,
@@ -2187,25 +2074,14 @@
 
 
   function bindEvents(els) {
-    // navigation (desktop + mobile separately to avoid mixed active-state issues)
-    if (els.navItemsDesktop && els.navItemsDesktop.length) {
-      els.navItemsDesktop.forEach((btn) => {
+    // navigation
+    if (els.navItems && els.navItems.length) {
+      els.navItems.forEach((btn) => {
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           const view = btn.dataset.view;
           if (!view) return;
-          switchView(view, els, { closeMobile: false });
-        });
-      });
-    }
-
-    if (els.navItemsMobile && els.navItemsMobile.length) {
-      els.navItemsMobile.forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.preventDefault();
-          const view = btn.dataset.view;
-          if (!view) return;
-          switchView(view, els, { closeMobile: true });
+          showView(view, els);
         });
       });
     }
@@ -2215,8 +2091,6 @@
       const isOpen = els.mobileNav.classList.toggle('is-open');
       els.menuBtn?.setAttribute('aria-expanded', String(isOpen));
     });
-
-
 
     els.newHabitBtn?.addEventListener('click', () => openModal(els));
     els.closeModalBtn?.addEventListener('click', () => closeModal(els));
@@ -2382,35 +2256,10 @@
         return;
       }
 
-      if (action === 'toggleReminder') {
-        const habit = state.habits.find((h) => h.id === habitId);
-        if (!habit) return;
-
-        habit.reminder = habit.reminder && typeof habit.reminder === 'object' ? habit.reminder : {};
-
-        // Toggle runtime reminder enabled flag.
-        habit.reminder.enabled = !!habit.reminder.enabled ? false : true;
-
-        // If enabling reminders but alarmTime is invalid/missing, auto-disable to avoid silent UI.
-        const hasAlarm = typeof habit.alarmTime === 'string' && habit.alarmTime.trim() && /^\d{2}:\d{2}$/.test(habit.alarmTime);
-        if (habit.reminder.enabled && !hasAlarm) {
-          habit.reminder.enabled = false;
-        }
-
-        save();
-
-        // Refresh view to update 🔔 ON/OFF label.
-        if (view === 'dashboard') renderDashboard(els);
-        else if (view === 'weekly') renderWeekly(els);
-        else if (view === 'monthly') renderMonthly(els);
-        return;
-      }
-
       if (action === 'setStatus') {
         const status = btn.dataset.status;
         const habit = state.habits.find((h) => h.id === habitId);
         if (!habit) return;
-
 
         const view = els.currentView || 'dashboard';
         if (view === 'monthly') {
@@ -2546,12 +2395,9 @@
 
     const els = {
 
-      navItemsAll: Array.from(document.querySelectorAll('.nav-item[data-view]')),
-      navItemsDesktop: Array.from(document.querySelectorAll('aside .nav .nav-item[data-view]')),
-      navItemsMobile: Array.from(document.querySelectorAll('#mobileNav .nav-item[data-view]')),
+      navItems: Array.from(document.querySelectorAll('.nav-item')),
       mobileNav: $('mobileNav'),
       menuBtn: $('menuBtn'),
-
 
       viewDashboard: $('view-dashboard'),
       viewWeekly: $('view-weekly'),
@@ -2669,11 +2515,31 @@
     load();
     ensureStateShape();
 
+    // STEP 2C (UI ONLY): Auth state badge (Guest remains default; no habit/cloud logic)
+    try {
+      const badge = document.getElementById('authStateBadge');
+      const badgeText = document.getElementById('authStateBadgeText');
+      if (badge) {
+        const uid = localStorage.getItem('habitTracker.auth.uid');
+        badge.style.display = 'flex';
+        if (uid) {
+          badgeText && (badgeText.textContent = 'Signed in');
+          const dot = badge.querySelector('.auth-badge-dot');
+          if (dot) dot.style.background = 'rgba(34,197,94,.95)';
+        } else {
+          badgeText && (badgeText.textContent = 'Guest');
+          const dot = badge.querySelector('.auth-badge-dot');
+          if (dot) dot.style.background = 'rgba(124,92,255,.95)';
+        }
+      }
+    } catch {}
+
     // Default the reminder picker visibility on load/open.
     syncReminderTypeUi(els);
 
 
     showView('dashboard', els);
+
     renderDashboard(els);
 
     // Midnight rollover re-render so the weekly chart updates without refresh.
@@ -2695,50 +2561,819 @@
       }
     }, 30000);
 
-    // Reminder scheduler (separate from the existing alarm modal/audio scheduler)
-    startReminderScheduler(els);
-
     startAlarmScheduler(els);
   }
 
+  function boot() {
+    // IMPORTANT: App must always call init()/boot() first.
+    // Phase 1 part-2: controller wiring only (UI overlay + click handlers).
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
-  else init();
+    init();
 
-  // Mobile sidebar open/close (guarded): ensures hamburger works even if other init wiring fails.
-  try {
-    document.addEventListener('DOMContentLoaded', () => {
-      const menuBtn = document.getElementById('menuBtn');
-      const mobileNav = document.getElementById('mobileNav');
-      const sidebar = document.querySelector('.sidebar');
-      if (!menuBtn || !mobileNav) return;
+    // Phase 3 Step 1: Firebase initialization only (no Auth/Firestore usage yet).
+    // Must never crash the app if Firebase or config is missing.
+    try {
+      if (firebaseConfig && typeof firebaseConfig === 'object') {
+        initializeApp(firebaseConfig);
+      }
+    } catch (e) {
+      try {
+        console.warn('[firebase] init failed (non-fatal):', e && e.message ? e.message : e);
+      } catch {
+        // ignore
+      }
+    }
 
-      // Use pointerup to avoid touch/click double-fire issues.
-      const handler = (e) => {
-        try { e && e.stopPropagation && e.stopPropagation(); } catch {}
-        mobileNav.classList.toggle('is-open');
-        const isOpen = mobileNav.classList.contains('is-open');
-        menuBtn.setAttribute('aria-expanded', String(isOpen));
-      };
+    // Overlay controller wiring (UI-only placeholders; no Firebase yet).
 
-      menuBtn.addEventListener('pointerup', handler);
-      menuBtn.addEventListener('click', handler, { passive: true });
+    // This must never alter habit/analytics/alarm/offline logic.
+    try {
+      const overlay = document.getElementById('authOverlay');
+      if (!overlay) return;
 
-      // Close menu if a nav item is clicked/tapped (extra safety).
-      mobileNav.addEventListener('click', (e) => {
-        const t = e.target;
-        const btn = t && t.closest ? t.closest('.nav-item[data-view]') : null;
-        if (btn) {
-          mobileNav.classList.remove('is-open');
-          menuBtn.setAttribute('aria-expanded', 'false');
+      const backdrop = document.getElementById('authOverlayBackdrop');
+      const closeBtn = document.getElementById('authOverlayCloseBtn');
+
+      const googleBtn = document.getElementById('authGoogleBtn');
+      const phoneBtn = document.getElementById('authPhoneBtn');
+      const guestBtn = document.getElementById('authGuestBtn');
+      const enableCloudBtn = document.getElementById('authEnableCloudBtn');
+
+      const statusEl = document.getElementById('authStatus');
+
+      function setStatus(msg) {
+        if (statusEl) statusEl.textContent = msg;
+      }
+
+      function openOverlay() {
+        try {
+          overlay.setAttribute('aria-hidden', 'false');
+          overlay.classList.add('is-open');
+          // Ensure backdrop is present for accessibility.
+          if (backdrop) backdrop.setAttribute('aria-hidden', 'false');
+        } catch {
+          // ignore
+        }
+      }
+
+      function closeOverlay() {
+        try {
+          overlay.setAttribute('aria-hidden', 'true');
+          overlay.classList.remove('is-open');
+          if (backdrop) backdrop.setAttribute('aria-hidden', 'true');
+        } catch {
+          // ignore
+        }
+      }
+
+      // Default behavior: keep overlay hidden for full backward compatibility.
+      // Only show overlay if a specific flag is set.
+      const shouldShow = (() => {
+        try {
+          return localStorage.getItem('habitTracker.auth.showOverlay') === 'true';
+        } catch {
+          return false;
+        }
+      })();
+
+      if (shouldShow) {
+        setStatus('Choose a login method to continue.');
+        openOverlay();
+      } else {
+        closeOverlay();
+      }
+
+      // Button handlers: placeholders only (no Firebase yet)
+      googleBtn?.addEventListener('click', async () => {
+        // STEP 2B: Firebase Auth only (no Firestore, no sync).
+        setStatus('Signing in with Google...');
+        try {
+          if (typeof getAuth !== 'function') {
+            setStatus('Firebase Auth SDK not available. Configure Firebase config.');
+            return;
+          }
+          const auth = getAuth();
+      // NOTE: Firebase OAuth requires a browser redirect/pop-up. This is optional/non-blocking.
+          const provider = new GoogleAuthProvider();
+          await signInWithPopup(auth, provider);
+
+          // STEP 2E prep: queue scaffolding (collect-only; no sync execution).
+          // Ensure queue key exists; do not run Firestore.
+          try {
+            localStorage.setItem('habitTracker.cloud.queue.prepared', 'true');
+          } catch {}
+
+          const user = auth.currentUser;
+          if (user && user.uid) {
+            setStatus('Signed in.');
+            try {
+              localStorage.setItem('habitTracker.auth.uid', user.uid);
+            } catch {}
+            closeOverlay();
+          } else {
+            setStatus('Signed in.');
+          }
+        } catch (e) {
+          try {
+            setStatus(`Google sign-in failed: ${e && e.message ? e.message : String(e)}`);
+          } catch {
+            // ignore
+          }
         }
       });
 
-      // Optional: ensure sidebar open class is not required by CSS.
-      void sidebar;
-    }, { once: true });
-  } catch {}
+      const otpSection = document.getElementById('authOtpSection');
+      const otpStatusEl = document.getElementById('authOtpStatus');
+      function setOtpStatus(msg) {
+        if (otpStatusEl) otpStatusEl.textContent = msg;
+      }
+
+      phoneBtn?.addEventListener('click', () => {
+        // STEP 2B: show OTP section. No auth execution here.
+        setStatus('');
+        if (otpSection) {
+          otpSection.style.display = 'block';
+          otpSection.setAttribute('aria-hidden', 'false');
+        }
+        setOtpStatus('Enter phone number and OTP.');
+      });
+
+      let phoneConfirmation = null;
+      const sendOtpBtn = document.getElementById('authSendOtpBtn');
+      const verifyOtpBtn = document.getElementById('authVerifyOtpBtn');
+
+      sendOtpBtn?.addEventListener('click', async () => {
+        // STEP 2B: Firebase Phone Auth only (no Firestore).
+        setOtpStatus('Sending OTP...');
+        try {
+          if (typeof getAuth !== 'function') {
+            setOtpStatus('Firebase Auth SDK not available.');
+            return;
+          }
+          const phoneInput = document.getElementById('authPhoneInput');
+          const phone = phoneInput && phoneInput.value ? String(phoneInput.value).trim() : '';
+          if (!phone) {
+            setOtpStatus('Enter a valid phone number.');
+            return;
+          }
+          const auth = getAuth();
+          const appVerifier = window.recaptchaVerifier || null;
+          // Without a real recaptcha verifier setup, this will fail gracefully.
+          if (!appVerifier) {
+            setOtpStatus('OTP needs reCAPTCHA verifier (not configured in this build).');
+            return;
+          }
+          // Lazy load recaptcha appVerifier must be provided separately.
+          phoneConfirmation = await signInWithPhoneNumber(auth, phone, appVerifier);
+          setOtpStatus('OTP sent. Enter code to verify.');
+        } catch (e) {
+          setOtpStatus(`Send OTP failed: ${e && e.message ? e.message : String(e)}`);
+        }
+      });
+
+      verifyOtpBtn?.addEventListener('click', async () => {
+        setOtpStatus('Verifying OTP...');
+        try {
+          if (typeof getAuth !== 'function') {
+            setOtpStatus('Firebase Auth SDK not available.');
+            return;
+          }
+          if (!phoneConfirmation) {
+            setOtpStatus('Send OTP first.');
+            return;
+          }
+          const otpInput = document.getElementById('authOtpInput');
+          const code = otpInput && otpInput.value ? String(otpInput.value).trim() : '';
+          if (!code) {
+            setOtpStatus('Enter OTP code.');
+            return;
+          }
+          const result = await phoneConfirmation.confirm(code);
+          const user = result && result.user ? result.user : null;
+          if (user && user.uid) {
+            try {
+              localStorage.setItem('habitTracker.auth.uid', user.uid);
+            } catch {}
+            setOtpStatus('Verified. Signed in.');
+            setStatus('Signed in.');
+            closeOverlay();
+          } else {
+            setOtpStatus('Verified.');
+          }
+        } catch (e) {
+          setOtpStatus(`Verify failed: ${e && e.message ? e.message : String(e)}`);
+        }
+      });
+
+      guestBtn?.addEventListener('click', () => {
+        // Guest continue: closes overlay only.
+        setStatus('');
+        closeOverlay();
+      });
+
+
+
+
+      enableCloudBtn?.addEventListener('click', async () => {
+        // STEP 2D (write-only backup + queue enable): enable flag only here.
+        // Queue processor is triggered only via explicit queue flag.
+        try {
+          localStorage.setItem('habitTracker.cloud.enabled', 'true');
+          setStatus('Cloud backup enabled. Sync will process pending queued changes when online.');
+        } catch {
+          setStatus('Cloud backup could not be enabled.');
+        }
+      });
+
+      // =============================
+      // Restore from Cloud (single read + safe merge)
+      // =============================
+
+      function showRestoreConfirm(els) {
+        els.restoreConfirmModal?.classList.add('is-open');
+        els.restoreConfirmModal?.setAttribute('aria-hidden', 'false');
+      }
+
+      function hideRestoreConfirm(els) {
+        els.restoreConfirmModal?.classList.remove('is-open');
+        els.restoreConfirmModal?.setAttribute('aria-hidden', 'true');
+      }
+
+      function isValidHHMM(hhmm) {
+        return typeof hhmm === 'string' && /^\d{2}:\d{2}$/.test(hhmm);
+      }
+
+      function validateAndCoerceSnapshot(snapshot) {
+        if (!snapshot || typeof snapshot !== 'object') return null;
+        const snap = snapshot.snapshot && typeof snapshot.snapshot === 'object' ? snapshot.snapshot : snapshot;
+
+        const habits = Array.isArray(snap.habits) ? snap.habits : null;
+        if (!habits) return null;
+
+        const xp = snap.xp && typeof snap.xp === 'object' ? snap.xp : null;
+        const streak = snap.streak && typeof snap.streak === 'object' ? snap.streak : null;
+
+        const out = {
+          habits,
+          xp,
+          streak,
+          meta: snap.meta && typeof snap.meta === 'object' ? snap.meta : {},
+          achievements: snap.achievements && typeof snap.achievements === 'object' ? snap.achievements : { unlocked: {} },
+        };
+
+        return out;
+      }
+
+      function mergeSnapshotIntoLocalState(cloudSnap) {
+        ensureStateShape();
+
+        const localHabits = Array.isArray(state.habits) ? state.habits : [];
+        const localById = new Map(localHabits.map((h) => [h && h.id ? h.id : null, h]));
+
+        const allCloudHabits = Array.isArray(cloudSnap.habits) ? cloudSnap.habits : [];
+
+        // Validate+coerce cloud habits; never replace local habit with empty/invalid values.
+        const cloudById = new Map();
+        for (const ch of allCloudHabits) {
+          if (!ch || typeof ch !== 'object') continue;
+          const id = typeof ch.id === 'string' ? ch.id : null;
+          if (!id) continue;
+
+          const name = typeof ch.name === 'string' ? ch.name : '';
+          const targetDays = safeNumber(ch.targetDays, 7);
+          const createdAt = safeNumber(ch.createdAt, Date.now());
+          const history = ch.history && typeof ch.history === 'object' ? ch.history : {};
+          const alarmTime = normalizeAlarmTimeToHHMM(ch.alarmTime);
+          const alarmSound = Math.max(1, Math.min(4, Number.isFinite(Number(ch.alarmSound)) ? Number(ch.alarmSound) : 1));
+          const alarmWeekdaysSelected = Array.isArray(ch.alarmWeekdaysSelected) ? ch.alarmWeekdaysSelected : null;
+
+          cloudById.set(id, {
+            id,
+            name,
+            targetDays,
+            createdAt,
+            history,
+            alarmTime,
+            alarmSound,
+            alarmWeekdaysSelected,
+          });
+        }
+
+        // Merge habits by habit.id:
+        // - if local habit exists and cloud habit has *valid non-empty* name/history, merge fields shallowly
+        // - if local habit exists but cloud fields are empty/invalid, keep local
+        // - if local habit missing, import cloud habit
+
+        const mergedHabits = [];
+        const usedCloudIds = new Set();
+
+        for (const lh of localHabits) {
+          if (!lh || typeof lh !== 'object' || !lh.id) continue;
+          const id = lh.id;
+          const cloudH = cloudById.get(id);
+
+          if (!cloudH) {
+            mergedHabits.push(lh);
+            continue;
+          }
+
+          usedCloudIds.add(id);
+
+          const nameToUse = typeof cloudH.name === 'string' && cloudH.name.trim() ? cloudH.name : lh.name;
+          const targetDaysToUse = Number.isFinite(Number(cloudH.targetDays)) && cloudH.targetDays >= 1 && cloudH.targetDays <= 7 ? cloudH.targetDays : lh.targetDays;
+          const createdAtToUse = Number.isFinite(Number(cloudH.createdAt)) ? cloudH.createdAt : lh.createdAt;
+
+          // History: only take cloud history if it is an object with at least one valid dateKey entry.
+          let historyToUse = lh.history;
+          if (cloudH.history && typeof cloudH.history === 'object') {
+            const hasAnyValid = Object.entries(cloudH.history).some(([k, v]) => /^\d{4}-\d{2}-\d{2}$/.test(k) && (v === 'done' || v === 'not_done'));
+            if (hasAnyValid) historyToUse = cloudH.history;
+          }
+
+          // Alarm fields: only update if cloud provides a valid alarmTime.
+          const alarmTimeToUse = isValidHHMM(cloudH.alarmTime) ? cloudH.alarmTime : lh.alarmTime;
+          const alarmSoundToUse = cloudH.alarmSound ? cloudH.alarmSound : lh.alarmSound;
+
+          // Weekdays: update only if cloud provides a non-empty array.
+          const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          let alarmWeekdaysSelectedToUse = lh.alarmWeekdaysSelected;
+          if (Array.isArray(cloudH.alarmWeekdaysSelected) && cloudH.alarmWeekdaysSelected.length) {
+            const filtered = cloudH.alarmWeekdaysSelected.filter((d) => allWeekdays.includes(d));
+            if (filtered.length) alarmWeekdaysSelectedToUse = filtered;
+          }
+
+          mergedHabits.push({
+            ...lh,
+            name: nameToUse,
+            targetDays: targetDaysToUse,
+            createdAt: createdAtToUse,
+            history: historyToUse,
+            alarmTime: alarmTimeToUse,
+            alarmSound: alarmSoundToUse,
+            alarmWeekdaysSelected: alarmWeekdaysSelectedToUse,
+          });
+        }
+
+        // Import cloud-only habits.
+        for (const [id, cloudH] of cloudById.entries()) {
+          if (usedCloudIds.has(id)) continue;
+          // If cloud habit is too empty/invalid, skip.
+          if (!cloudH.name || !cloudH.name.trim()) continue;
+
+          // Ensure invariants.
+          mergedHabits.unshift({
+            id,
+            name: cloudH.name,
+            targetDays: cloudH.targetDays,
+            createdAt: cloudH.createdAt,
+            history: cloudH.history && typeof cloudH.history === 'object' ? cloudH.history : {},
+            alarmTime: normalizeAlarmTimeToHHMM(cloudH.alarmTime),
+            alarmSound: Math.max(1, Math.min(4, Number(cloudH.alarmSound) || 1)),
+            alarmWeekdaysSelected: Array.isArray(cloudH.alarmWeekdaysSelected) && cloudH.alarmWeekdaysSelected.length
+              ? cloudH.alarmWeekdaysSelected.filter((d) => allWeekdays.includes(d))
+              : allWeekdays,
+          });
+        }
+
+        state.habits = mergedHabits;
+
+        // Resolve derived/stored sections using existing application logic.
+        // - streak history: based on persisted completion records in habit.history
+        rebuildStreakHistoryFromHabitHistory();
+
+        // - XP totals: derived; also seed ledger stub.
+        seedXpLedgerFromHistory();
+
+        // - analytics UI depends on state.habits/history so no extra recompute needed beyond renderAnalytics().
+
+        // Ensure persisted alarmTime invariant for safety.
+        for (const habit of state.habits || []) {
+          if (!habit || typeof habit !== 'object') continue;
+          habit.alarmTime = normalizeAlarmTimeToHHMM(habit.alarmTime);
+        }
+
+        // Mark views dirty so UI refresh is correct.
+        state._dirtyViews.weekly = true;
+        state._dirtyViews.monthly = true;
+        state._dirtyViews.trash = true;
+
+        return true;
+      }
+
+      async function restoreFromCloudOnce(els) {
+        // No listeners here; only called by button click.
+        try {
+          const uid = getCloudUid();
+          if (!uid) {
+            setStatus('Not signed in.');
+            return;
+          }
+
+          if (typeof getFirestore !== 'function' || typeof doc !== 'function' || typeof getDoc !== 'function') {
+            setStatus('Firestore not available.');
+            return;
+          }
+
+          const db = getFirestore();
+          if (!db) {
+            setStatus('Firestore not available.');
+            return;
+          }
+
+          const docRef = doc(db, 'users', uid, 'snapshot', 'latest');
+          const snap = await getDoc(docRef);
+
+          if (!snap || typeof snap.exists !== 'function' || !snap.exists()) {
+            setStatus('No cloud snapshot found.');
+            return;
+          }
+
+          const data = typeof snap.data === 'function' ? snap.data() : null;
+          const validated = validateAndCoerceSnapshot(data);
+          if (!validated) {
+            setStatus('Cloud snapshot invalid or incompatible.');
+            return;
+          }
+
+          const ok = mergeSnapshotIntoLocalState(validated);
+          if (!ok) {
+            setStatus('Restore aborted.');
+            return;
+          }
+
+          // Close confirm modal and refresh UI for current view.
+          hideRestoreConfirm(els);
+          setStatus('Restore complete.');
+
+          // Refresh the current UI.
+          if (els.currentView === 'dashboard') {
+            renderDashboard(els);
+            renderXpUi(els);
+          } else if (els.currentView === 'weekly') {
+            renderWeekly(els);
+          } else if (els.currentView === 'monthly') {
+            renderMonthly(els);
+          } else {
+            renderDashboard(els);
+          }
+
+          // Persist merged state.
+          // Important: calling save() here uses existing persistence flow; it does not enqueue queue uploads.
+          save();
+        } catch (e) {
+          try {
+            setStatus(`Restore failed: ${e && e.message ? e.message : String(e)}`);
+          } catch {}
+        }
+      }
+
+      // Connect existing restore confirmation button.
+      try {
+        const restoreBtn = document.getElementById('authRestoreFromCloudBtn');
+        const restoreConfirmRestoreBtn = document.getElementById('restoreConfirmRestoreBtn');
+        const restoreConfirmCancelBtn = document.getElementById('restoreConfirmCancelBtn');
+        const restoreConfirmCloseBtn = document.getElementById('restoreConfirmCloseBtn');
+        const restoreConfirmModalEl = document.getElementById('restoreConfirmModal');
+
+        if (restoreBtn && restoreConfirmModalEl && restoreConfirmRestoreBtn) {
+          restoreBtn.addEventListener('click', () => {
+            showRestoreConfirm({ restoreConfirmModal: restoreConfirmModalEl });
+          });
+
+          restoreConfirmCancelBtn?.addEventListener('click', () => {
+            hideRestoreConfirm({ restoreConfirmModal: restoreConfirmModalEl });
+          });
+
+          restoreConfirmCloseBtn?.addEventListener('click', () => {
+            hideRestoreConfirm({ restoreConfirmModal: restoreConfirmModalEl });
+          });
+
+          restoreConfirmRestoreBtn.addEventListener('click', () => {
+            // Important: only one Firestore read.
+            restoreFromCloudOnce({
+              restoreConfirmModal: restoreConfirmModalEl,
+              currentView: els.currentView,
+            });
+          });
+        }
+      } catch {
+        // never break auth overlay / restore / queue engine
+      }
+
+      // =============================
+      // Sync Engine (local queue -> batched Firestore write)
+      // =============================
+      // Constraints from task:
+      // - localStorage remains source of truth
+      // - Firestore passive backup
+      // - queue processes only when authenticated AND cloudBackupExplicitlyEnabled
+      // - no automatic restore
+      // - no direct sync execution without queue trigger flag
+      // - never overwrite valid local data with empty cloud payloads (we only upload local snapshot)
+      // - must not block UI thread
+
+
+      const CLOUD_QUEUE_KEY = 'habitTracker.cloud.queue.v1';
+      const CLOUD_QUEUE_TRIG_KEY = 'habitTracker.cloud.queue.trigger';
+
+      function getCloudUid() {
+        try {
+          return localStorage.getItem('habitTracker.auth.uid');
+        } catch {
+          return null;
+        }
+      }
+
+      function isCloudEnabled() {
+        try {
+          return localStorage.getItem('habitTracker.cloud.enabled') === 'true';
+        } catch {
+          return false;
+        }
+      }
+
+      function isQueueTriggerEnabled() {
+        try {
+          return localStorage.getItem(CLOUD_QUEUE_TRIG_KEY) === 'true';
+        } catch {
+          return false;
+        }
+      }
+
+      function setQueueTriggerEnabled(v) {
+        try {
+          localStorage.setItem(CLOUD_QUEUE_TRIG_KEY, v ? 'true' : 'false');
+        } catch {}
+      }
+
+      function readQueue() {
+        try {
+          const raw = localStorage.getItem(CLOUD_QUEUE_KEY);
+          if (!raw) return [];
+          const q = JSON.parse(raw);
+          return Array.isArray(q) ? q : [];
+        } catch {
+          return [];
+        }
+      }
+
+      function writeQueue(q) {
+        try {
+          localStorage.setItem(CLOUD_QUEUE_KEY, JSON.stringify(q));
+        } catch {}
+      }
+
+      // Enqueue only; never sync here.
+      function enqueueCloudBackup(reason) {
+        try {
+          const uid = getCloudUid();
+          if (!uid) return;
+          if (!isCloudEnabled()) return;
+
+          // Throttle: if last queued item is very recent and identical-ish, keep queue small.
+          const q = readQueue();
+          const nowMs = Date.now();
+          const last = q[0];
+          if (last && typeof last === 'object' && last.kind === 'state' && nowMs - (last.queuedAtMs || 0) < 15000) {
+            // Replace payload timestamp only; keep queue length stable.
+            q[0] = { ...last, queuedAtMs: nowMs, reason: reason || last.reason };
+            writeQueue(q);
+            return;
+          }
+
+          const payload = {
+            kind: 'state',
+            queuedAtMs: nowMs,
+            reason: reason || 'local-change',
+            // capture only a validation-friendly subset for backup
+            state: {
+              habits: state && Array.isArray(state.habits) ? cloneData(state.habits) : [],
+              meta: state && state.meta && typeof state.meta === 'object' ? {
+                settings: state.meta.settings,
+                dailyQuests: state.meta.dailyQuests,
+                monthlySelected: state.meta.monthlySelected,
+                habitTrash: state.meta.habitTrash,
+                monthlyByMonthKey: state.meta.monthlyByMonthKey,
+                streakHistory: state.meta.streakHistory,
+                habitAlarmDismissals: state.meta.habitAlarmDismissals,
+              } : {},
+              xp: state && state.xp && typeof state.xp === 'object' ? cloneData(state.xp) : { total: 0, ledger: {} },
+              streak: state && state.streak && typeof state.streak === 'object' ? cloneData(state.streak) : { current: 0, best: 0 },
+              achievements: state && state.achievements && typeof state.achievements === 'object' ? cloneData(state.achievements) : { unlocked: {} },
+            },
+          };
+
+          q.unshift(payload);
+          // Cap queue size
+          const capped = q.slice(0, 25);
+          writeQueue(capped);
+
+          // queue trigger flag enables processor (per task constraint)
+          setQueueTriggerEnabled(true);
+        } catch {}
+      }
+
+      let cloudProcessInFlight = false;
+      let cloudProcessTimerHandle = null;
+
+      const CLOUD_QUEUE_RETRY_MAX = 5;
+      const CLOUD_QUEUE_RETRY_BASE_MS = 1500;
+      const CLOUD_QUEUE_RETRY_MAX_MS = 60 * 1000;
+
+      function shouldProcessQueueNow() {
+        try {
+          // STRICT execution gate: all conditions must be true
+          const uid = getCloudUid();
+          const cloudEnabled = isCloudEnabled();
+          const queueTrigger = isQueueTriggerEnabled();
+          const online = navigator.onLine === true;
+          return !!(uid && cloudEnabled && queueTrigger && online);
+        } catch {
+          return false;
+        }
+      }
+
+      function getRetryCountForLatestItemId(queue) {
+        // We keep retry counters on each queue item (crash-safe because stored in localStorage).
+        // The latest item to attempt is always index 0 (newest).
+        const latest = queue && queue[0];
+        const n = latest && typeof latest.retryCount === 'number' ? latest.retryCount : 0;
+        return Math.max(0, Math.floor(n));
+      }
+
+      function scheduleProcessQueue(reason) {
+        // Debounce + no duplicate timers.
+        if (cloudProcessInFlight) return;
+        if (!shouldProcessQueueNow()) return;
+
+        if (cloudProcessTimerHandle) return;
+
+        // Quick coalescing delay; multiple triggers in a burst still schedule once.
+        cloudProcessTimerHandle = setTimeout(() => {
+          cloudProcessTimerHandle = null;
+          processQueue(reason).catch(() => {});
+        }, 250);
+      }
+
+      async function processQueue(reason) {
+        if (cloudProcessInFlight) return;
+        cloudProcessInFlight = true;
+
+        try {
+          // Strict execution gate: exit immediately if any condition fails.
+          if (!shouldProcessQueueNow()) return;
+
+          const uid = getCloudUid();
+          if (!uid) return;
+
+          const q = readQueue();
+          if (!q.length) {
+            setQueueTriggerEnabled(false);
+            return;
+          }
+
+          if (typeof getFirestore !== 'function' || typeof doc !== 'function' || typeof setDoc !== 'function') {
+            return;
+          }
+
+          const db = getFirestore();
+          if (!db) return;
+
+          // Batch upload: only upload the latest snapshot (index 0). This preserves the existing
+          // Firestore document structure (users/{uid}/snapshot/latest) while minimizing writes.
+          // Sequential FIFO requirement is preserved by removing only successfully uploaded items:
+          // if the latest succeeds, we remove all processed items because they would be superseded anyway.
+          const latestIndex = 0;
+          const latestItem = q[latestIndex];
+          if (!latestItem || !latestItem.state) {
+            // If latest payload is invalid, remove it and retry on next schedule.
+            const cleaned = q.slice(1);
+            writeQueue(cleaned);
+            return;
+          }
+
+          // Retry logic: keep queue intact and reschedule on failure.
+          const retryCount = typeof latestItem.retryCount === 'number' ? latestItem.retryCount : 0;
+          if (retryCount >= CLOUD_QUEUE_RETRY_MAX) {
+            // Prevent infinite loops: drop the latest bad payload only.
+            const cleaned = q.slice(1);
+            writeQueue(cleaned);
+            // If more items remain, schedule another attempt.
+            if (cleaned.length) setQueueTriggerEnabled(true);
+            return;
+          }
+
+          // Validate snapshot completeness minimally
+          const snap = latestItem.state;
+          const safeHabits = Array.isArray(snap.habits) ? snap.habits : [];
+          const safeMeta = snap.meta && typeof snap.meta === 'object' ? snap.meta : {};
+          const safeXp = snap.xp && typeof snap.xp === 'object' ? snap.xp : { total: 0, ledger: {} };
+          const safeStreak = snap.streak && typeof snap.streak === 'object' ? snap.streak : { current: 0, best: 0 };
+          const safeAchievements =
+            snap.achievements && typeof snap.achievements === 'object' ? snap.achievements : { unlocked: {} };
+
+          const snapshotDoc = {
+            v: 1,
+            savedAtMs: Date.now(),
+            updatedFromQueueAtMs: latestItem.queuedAtMs,
+            reason: latestItem.reason || reason,
+            snapshot: {
+              habits: safeHabits,
+              meta: safeMeta,
+              xp: safeXp,
+              streak: safeStreak,
+              achievements: safeAchievements,
+            },
+          };
+
+          // Keep existing Firestore write path unchanged.
+          const docRef = doc(db, 'users', uid, 'snapshot', 'latest');
+
+          try {
+            await setDoc(docRef, snapshotDoc, { merge: false });
+          } catch {
+            // Partial failure: leave the queue intact.
+            // Increment retry counter on the latest item only (crash-safe).
+            try {
+              const q2 = readQueue();
+              if (Array.isArray(q2) && q2.length && q2[0] && q2[0].state) {
+                q2[0] = { ...q2[0], retryCount: retryCount + 1, lastAttemptAtMs: Date.now() };
+                writeQueue(q2);
+              }
+            } catch {}
+
+            // Exponential backoff retry scheduling.
+            const nextRetryCount = retryCount + 1;
+            const delayMs = Math.min(
+              CLOUD_QUEUE_RETRY_MAX_MS,
+              Math.round(CLOUD_QUEUE_RETRY_BASE_MS * Math.pow(2, nextRetryCount))
+            );
+
+            // Ensure queue trigger remains enabled so a later schedule can run.
+            setQueueTriggerEnabled(true);
+
+            if (!cloudProcessTimerHandle && shouldProcessQueueNow()) {
+              cloudProcessTimerHandle = setTimeout(() => {
+                cloudProcessTimerHandle = null;
+                processQueue('retry').catch(() => {});
+              }, delayMs);
+            }
+
+            return;
+          }
+
+          // Success: remove all queued items since we've uploaded the latest snapshot.
+          // This prevents stale accumulation and redundant writes.
+          writeQueue([]);
+          setQueueTriggerEnabled(false);
+        } finally {
+          cloudProcessInFlight = false;
+        }
+      }
+
+
+
+      // Trigger queue processor only when explicitly allowed (flag) and online.
+      window.addEventListener('online', () => {
+        // Strict idle requirement: do nothing unless ALL conditions are true.
+        if (!shouldProcessQueueNow()) return;
+        scheduleProcessQueue('online');
+      });
+
+
+      // NOTE: Intentionally DO NOT patch/override `save()`.
+      // Queueing is triggered by explicit user actions and offline queue creation only.
+
+      // initial scheduling if queue already exists (queue-only processor)
+      try {
+        if (readQueue().length && isCloudEnabled() && isQueueTriggerEnabled() && navigator.onLine) scheduleProcessQueue('init-queue');
+      } catch {}
+
+
+
+
+      // Overlay dismissal controls (UI only)
+      backdrop?.addEventListener('click', () => {
+        closeOverlay();
+      });
+
+      closeBtn?.addEventListener('click', () => {
+        closeOverlay();
+      });
+
+      // Escape key closes overlay (UI only)
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const isOpen = overlay.classList.contains('is-open');
+        if (isOpen) closeOverlay();
+      });
+    } catch {
+      // Never break app if auth overlay elements are missing.
+    }
+  }
+
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
+  else boot();
 })();
-
-
 

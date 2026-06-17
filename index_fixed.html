@@ -13,8 +13,87 @@
 </head>
 <body>
   <div class="app">
+    <!-- Auth Overlay (Phase 1: UI-only, hidden by default) -->
+    <section class="auth-overlay" id="authOverlay" aria-hidden="true">
+      <div class="auth-overlay-backdrop" id="authOverlayBackdrop" tabindex="-1" aria-hidden="true"></div>
+      <div class="auth-overlay-card" role="dialog" aria-modal="true" aria-labelledby="authOverlayTitle">
+        <div class="auth-overlay-head">
+          <div>
+            <div class="auth-overlay-kicker">Premium Sync</div>
+            <div class="auth-overlay-title" id="authOverlayTitle">Welcome back</div>
+            <div class="auth-overlay-sub">Your data stays local until you enable cloud backup.</div>
+          </div>
+          <button class="icon-btn" type="button" id="authOverlayCloseBtn" aria-label="Close">✕</button>
+        </div>
+
+        <div class="auth-overlay-body">
+          <div class="auth-actions">
+            <button class="glow-btn auth-btn" type="button" id="authGoogleBtn">Continue with Google</button>
+            <button class="ghost-btn auth-btn" type="button" id="authPhoneBtn">Continue with Mobile Number</button>
+            <button class="ghost-btn auth-btn" type="button" id="authGuestBtn">Continue as Guest</button>
+          </div>
+
+          <!-- STEP 2A (UI ONLY): Phone OTP scaffolding — no logic yet -->
+          <div class="auth-otp" id="authOtpSection" aria-hidden="true" style="display:none;">
+            <div class="auth-field">
+              <div class="auth-field-label">Mobile number</div>
+              <input id="authPhoneInput" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g., +1 555 123 4567" />
+            </div>
+
+            <div class="auth-otp-actions">
+              <button class="glow-btn" type="button" id="authSendOtpBtn">Send OTP</button>
+              <button class="ghost-btn" type="button" id="authVerifyOtpBtn">Verify OTP</button>
+            </div>
+
+            <div class="auth-field" style="margin-top:10px;">
+              <div class="auth-field-label">OTP</div>
+              <input id="authOtpInput" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Enter 6-digit code" maxlength="6" />
+            </div>
+
+            <div class="auth-status" id="authOtpStatus" aria-live="polite"></div>
+          </div>
+
+
+          <div class="auth-divider"></div>
+
+          <div class="auth-optin">
+            <div class="auth-optin-title">Cloud backup is off</div>
+            <div class="auth-optin-sub">Enable cloud backup to start syncing with your account.</div>
+            <button class="glow-btn" type="button" id="authEnableCloudBtn">Enable cloud backup</button>
+            <div style="margin-top:12px; display:none;" id="authRestoreFromCloudWrap">
+              <button class="ghost-btn" type="button" id="authRestoreFromCloudBtn">Restore from Cloud</button>
+            </div>
+          </div>
+
+          <div class="auth-status" id="authStatus" aria-live="polite"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Restore confirmation modal (UI placeholder only; no Firestore restore yet) -->
+    <section class="modal" id="restoreConfirmModal" aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title">Restore from Cloud?</div>
+            <div class="modal-sub">This will merge cloud data with your local habits.</div>
+          </div>
+          <button class="icon-btn" type="button" id="restoreConfirmCloseBtn" aria-label="Close">✕</button>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-btn" type="button" id="restoreConfirmCancelBtn">Cancel</button>
+          <button class="glow-btn" type="button" id="restoreConfirmRestoreBtn">Restore</button>
+        </div>
+      </div>
+    </section>
+
     <aside class="sidebar" aria-label="Sidebar">
 
+        </div>
+      </div>
+    </section>
+
+    <aside class="sidebar" aria-label="Sidebar">
       <div class="side-top">
         <div class="brand">
           <div class="logo">✓</div>
