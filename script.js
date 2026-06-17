@@ -604,7 +604,10 @@
       el.classList.toggle('is-hidden', k !== view);
     }
 
-    if (els.navItems) els.navItems.forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
+    // active state update for both sidebar + mobile
+    if (els.navItemsAll) {
+      els.navItemsAll.forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
+    }
 
     if (view === 'weekly') state._dirtyViews.weekly = true;
     if (view === 'monthly') state._dirtyViews.monthly = true;
@@ -612,6 +615,17 @@
 
     scheduleRender(els, view);
   }
+
+  function switchView(viewName, els, { closeMobile = true } = {}) {
+    if (!viewName) return;
+    showView(viewName, els);
+
+    if (closeMobile && els.mobileNav) {
+      els.mobileNav.classList.remove('is-open');
+      els.menuBtn?.setAttribute('aria-expanded', 'false');
+    }
+  }
+
 
   function scheduleRender(els, view) {
     if (renderScheduled) return;
@@ -2173,14 +2187,25 @@
 
 
   function bindEvents(els) {
-    // navigation
-    if (els.navItems && els.navItems.length) {
-      els.navItems.forEach((btn) => {
+    // navigation (desktop + mobile separately to avoid mixed active-state issues)
+    if (els.navItemsDesktop && els.navItemsDesktop.length) {
+      els.navItemsDesktop.forEach((btn) => {
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           const view = btn.dataset.view;
           if (!view) return;
-          showView(view, els);
+          switchView(view, els, { closeMobile: false });
+        });
+      });
+    }
+
+    if (els.navItemsMobile && els.navItemsMobile.length) {
+      els.navItemsMobile.forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const view = btn.dataset.view;
+          if (!view) return;
+          switchView(view, els, { closeMobile: true });
         });
       });
     }
@@ -2190,6 +2215,8 @@
       const isOpen = els.mobileNav.classList.toggle('is-open');
       els.menuBtn?.setAttribute('aria-expanded', String(isOpen));
     });
+
+
 
     els.newHabitBtn?.addEventListener('click', () => openModal(els));
     els.closeModalBtn?.addEventListener('click', () => closeModal(els));
@@ -2519,9 +2546,12 @@
 
     const els = {
 
-      navItems: Array.from(document.querySelectorAll('.nav-item')),
+      navItemsAll: Array.from(document.querySelectorAll('.nav-item[data-view]')),
+      navItemsDesktop: Array.from(document.querySelectorAll('aside .nav .nav-item[data-view]')),
+      navItemsMobile: Array.from(document.querySelectorAll('#mobileNav .nav-item[data-view]')),
       mobileNav: $('mobileNav'),
       menuBtn: $('menuBtn'),
+
 
       viewDashboard: $('view-dashboard'),
       viewWeekly: $('view-weekly'),
@@ -2674,5 +2704,41 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
   else init();
+
+  // Mobile sidebar open/close (guarded): ensures hamburger works even if other init wiring fails.
+  try {
+    document.addEventListener('DOMContentLoaded', () => {
+      const menuBtn = document.getElementById('menuBtn');
+      const mobileNav = document.getElementById('mobileNav');
+      const sidebar = document.querySelector('.sidebar');
+      if (!menuBtn || !mobileNav) return;
+
+      // Use pointerup to avoid touch/click double-fire issues.
+      const handler = (e) => {
+        try { e && e.stopPropagation && e.stopPropagation(); } catch {}
+        mobileNav.classList.toggle('is-open');
+        const isOpen = mobileNav.classList.contains('is-open');
+        menuBtn.setAttribute('aria-expanded', String(isOpen));
+      };
+
+      menuBtn.addEventListener('pointerup', handler);
+      menuBtn.addEventListener('click', handler, { passive: true });
+
+      // Close menu if a nav item is clicked/tapped (extra safety).
+      mobileNav.addEventListener('click', (e) => {
+        const t = e.target;
+        const btn = t && t.closest ? t.closest('.nav-item[data-view]') : null;
+        if (btn) {
+          mobileNav.classList.remove('is-open');
+          menuBtn.setAttribute('aria-expanded', 'false');
+        }
+      });
+
+      // Optional: ensure sidebar open class is not required by CSS.
+      void sidebar;
+    }, { once: true });
+  } catch {}
 })();
+
+
 
