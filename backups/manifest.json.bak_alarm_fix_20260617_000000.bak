@@ -1,0 +1,20 @@
+{
+  "name": "Daily Habit Tracker",
+  "short_name": "DHT",
+  "id": "./",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#0f172a",
+  "description": "Modern habit tracker productivity app",
+  "categories": ["productivity", "health"],
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1668,14 +1668,8 @@
       }
     }
 
-    // Clear modal/scheduler runtime flags so it can't immediately re-trigger.
-    if (state?.meta?.alarmRuntime) {
-      state.meta.alarmRuntime.activeHabitId = null;
-      state.meta.alarmRuntime._snoozeOverride = null;
-      state.meta.alarmRuntime._modalOpen = false;
-    }
+    if (state?.meta?.alarmRuntime) state.meta.alarmRuntime.activeHabitId = null;
   }
-
 
 
 
@@ -1756,108 +1750,18 @@
     state.meta.alarmRuntime._lastFiredDayByHabit = state.meta.alarmRuntime._lastFiredDayByHabit || {}; // habitId -> 'YYYY-MM-DD'
     state.meta.alarmRuntime._snoozeOverride = state.meta.alarmRuntime._snoozeOverride || null;
 
-    // Persisted missed-alarm tracking so we can recover after refresh/reopen.
-    // This stays in localStorage to survive page reload.
-    state.meta.habitAlarmSnoozes = state.meta.habitAlarmSnoozes || {};
-    state.meta.habitAlarmLastDue = state.meta.habitAlarmLastDue || {};
-
-    // Missed-alarm recovery (runs once per scheduler start)
-    // If app was backgrounded/refreshed and missed a due time within grace window, we trigger immediately.
-    // NOTE: timers cannot run when fully closed; we can only recover on next open/refresh.
-    const recoverMissed = () => {
-      try {
-        const now = new Date();
-        const nowMs = now.getTime();
-        const graceMs = ALARM_MISSED_RECOVERY_GRACE_MS;
-        const tNowDayKey = todayKey(now);
-
-        // snooze override recovery (if snooze persisted)
-        const activeOverride = state.meta.alarmRuntime._snoozeOverride;
-        if (activeOverride && typeof activeOverride.triggerAtMs === 'number' && nowMs >= activeOverride.triggerAtMs) {
-          // Let the normal tick handle it.
-          return;
-        }
-
-        for (const habit of state.habits || []) {
-          if (!habit?.alarmTime) continue;
-          if (!habit?.id) continue;
-
-          const dismissedToday = state?.meta?.habitAlarmDismissals?.[habit.id] === tNowDayKey;
-          if (dismissedToday) continue;
-
-          // Compute the scheduled time for today (in local time)
-          const [hhStr, mmStr] = String(habit.alarmTime).split(':');
-          const hh = Number(hhStr);
-          const mm = Number(mmStr);
-          if (!Number.isFinite(hh) || !Number.isFinite(mm)) continue;
-
-          const scheduled = new Date(now);
-          scheduled.setHours(hh, mm, 0, 0);
-          const lateMs = nowMs - scheduled.getTime();
-
-          // If we are late but still within grace, and we haven't fired due for this habit today, trigger.
-          if (lateMs >= 0 && lateMs <= graceMs) {
-            const alreadyDueForDay = state.meta.habitAlarmLastDue[habit.id] === tNowDayKey;
-            const alreadyFiredRuntimeDay = state.meta.alarmRuntime._lastFiredDayByHabit[habit.id] === tNowDayKey;
-            if (alreadyDueForDay || alreadyFiredRuntimeDay) continue;
-
-            // Also enforce shouldTriggerAlarm rules (weekday + modal gate)
-            if (!shouldTriggerAlarm(habit, now)) continue;
-
-            state.meta.alarmRuntime._lastFiredDayByHabit[habit.id] = tNowDayKey;
-            state.meta.alarmRuntime._lastFiredMinute[habit.id] = `${tNowDayKey}:${hhmmNow(now)}`;
-            state.meta.alarmRuntime.activeHabitId = habit.id;
-            state.meta.alarmRuntime._modalOpen = true;
-            state.meta.habitAlarmLastDue[habit.id] = tNowDayKey;
-
-            console.log('[alarm] recovered missed alarm', {
-              habitId: habit.id,
-              habitName: habit.name,
-              lateMs,
-            });
-
-            stopAlarmAudio();
-            playAlarmAudio(alarmSoundUrlForHabit(habit));
-            openAlarmModal(els, habit);
-            // Optional Web Notification via Service Worker
-            try {
-              if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-                navigator.serviceWorker.controller.postMessage({
-                  kind: 'ALARM_NOTIFICATION',
-                  payload: {
-                    title: 'Habit reminder',
-                    body: habit.name,
-                    tag: `habit-alarm:${habit.id}`,
-                    icon: './icon.png',
-                  },
-                });
-              } else if ('Notification' in window && Notification.permission === 'granted') {
-                // Fallback: direct notification when SW isn't controlled
-                new Notification('Habit reminder', { body: habit.name, tag: `habit-alarm:${habit.id}`, icon: './icon.png' });
-              }
-            } catch {}
-            break;
-          }
-
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    recoverMissed();
-
-    const tick = () => {
+  const tick = () => {
       try {
         // heartbeat (throttle logging)
         const now = new Date();
         const nowMs = now.getTime();
         state.meta.alarmRuntime._hbCount = (state.meta.alarmRuntime._hbCount || 0) + 1;
         if (ALARM_DEBUG || (state.meta.alarmRuntime._hbCount % ALARM_HEARTBEAT_EVERY === 0)) {
-          // console.log removed to keep prod logs minimal
-
+          console.log('[alarm] scheduler running...', {
+            tick: state.meta.alarmRuntime._hbCount,
+            now: now.toISOString(),
+          });
         }
-
 
         // snooze override: temporarily fire based on override timestamp
         const override = state.meta.alarmRuntime._snoozeOverride;
@@ -2666,37 +2570,7 @@
 
     init();
 
-    // Service Worker + Notification permission (alarm-related; optional, non-fatal)
-    try {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('./service-worker.js').catch(() => {});
-      }
-    } catch {}
-
-    try {
-      if ('Notification' in window && typeof Notification.requestPermission === 'function') {
-        // Request once; if user denies, don't spam.
-        const already = (() => {
-          try {
-            return localStorage.getItem('habitTracker.notifications.permissionRequested') === 'true';
-          } catch {
-            return false;
-          }
-        })();
-
-        if (!already && Notification.permission !== 'granted') {
-          Notification.requestPermission().then((p) => {
-            try {
-              localStorage.setItem('habitTracker.notifications.permissionRequested', 'true');
-            } catch {}
-            console.log('[alarm] notification permission status', { status: p });
-          });
-        }
-      }
-    } catch {}
-
     // Phase 3 Step 1: Firebase initialization only (no Auth/Firestore usage yet).
-
     // Must never crash the app if Firebase or config is missing.
     try {
       if (firebaseConfig && typeof firebaseConfig === 'object') {

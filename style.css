@@ -37,6 +37,21 @@ img,svg{max-width:100%;height:auto}
   min-height:100vh;
 }
 
+/* Mobile-first fix for blank space: avoid min-height-driven layout gaps */
+@media (max-width: 820px){
+  .app{
+    min-height:0;
+    display:block;
+  }
+  /* ensure header -> main flow without reserved sidebar height */
+  .main{padding-top:0;}
+  /* prevent any hidden-but-present mobile nav height */
+  .mobile-nav{max-height:0; overflow:hidden;}
+  .mobile-nav.is-open{max-height:360px;}
+}
+
+
+
 .sidebar{
   border-right:1px solid var(--border);
   padding:22px;
