@@ -417,13 +417,13 @@
 
   function save() {
     try {
+      console.log('Saving state', state);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      console.log('Saved to localStorage');
     } catch {
       // ignore
     }
   }
-
-
 
 
   // XP is derived (no ledger source-of-truth).
@@ -660,14 +660,8 @@
     if (!els.viewDashboard) return;
     if (typeof renderAnalytics === 'function') renderAnalytics(els);
 
-    // TEMP DIAGNOSTICS (remove after fix)
-    try {
-      console.log('[debug][renderDashboard] state.habits.length=', state?.habits?.length);
-    } catch {}
-
     els.todayLabel && (els.todayLabel.textContent = formatToday());
     els.motivationQuote && (els.motivationQuote.textContent = pickMotivation());
-
 
     resolveDailyStreakAndMissedDays(els);
 
@@ -704,12 +698,9 @@
         // Show only when habit has a *valid* alarmTime saved as HH:MM (24h).
         // If alarmEnabled is ON => 🔔 time, OFF => 🔕 time.
         const alarmTime = habit?.alarmTime;
-        const isAlarmEnabled = habit?.alarmEnabled === true;
-
+        const alarmEnabled = habit?.alarmEnabled === true;
         if (typeof alarmTime === 'string' && alarmTime.trim() && /^\d{2}:\d{2}$/.test(alarmTime)) {
-
           const alarmEl = document.createElement('div');
-
           alarmEl.style.marginTop = '2px';
           alarmEl.style.fontSize = '12px';
           alarmEl.style.color = 'rgba(232,238,252,.85)';
@@ -722,306 +713,161 @@
           const hh12 = ((hh % 12) || 12);
           const mm2 = String(mm).padStart(2, '0');
 
-          alarmEl.textContent = `${habit?.alarmEnabled === true ? '🔔' : '🔕'} ${hh12}:${mm2} ${ampm}`;
-
+          alarmEl.textContent = `${alarmEnabled ? '🔔' : '🔕'} ${hh12}:${mm2} ${ampm}`;
           left.appendChild(alarmEl);
         }
 
         // Reminder Box + Floating menu (ONE compact reminder element per card)
-        // ====== Mobile/target alarm UI: circular bell + popover (bell-only controls) ======
-        const alarmTimeValid = typeof habit.alarmTime === 'string' && /^\d{2}:\d{2}$/.test(habit.alarmTime);
-        const alarmEnabled = habit?.alarmEnabled === true;
+        const reminderTimeValid = typeof habit.alarmTime === 'string' && /^\d{2}:\d{2}$/.test(habit.alarmTime);
+        const isOn = habit?.alarmEnabled === true;
 
-        const parseAlarm12h = (hhmm) => {
-          if (!hhmm || typeof hhmm !== 'string') return { timeLabel: '', hh24: 0, mm: 0 };
-          const [hhStr, mmStr] = hhmm.split(':');
-          const hh24 = Number(hhStr);
+        const reminderBoxWrap = document.createElement('div');
+        reminderBoxWrap.className = 'alarm-reminder-box-wrap';
+        reminderBoxWrap.style.position = 'relative';
+        reminderBoxWrap.style.width = '100%';
+
+        const reminderBox = document.createElement('button');
+        reminderBox.type = 'button';
+        reminderBox.className = 'alarm-reminder-box';
+        reminderBox.dataset.action = 'openReminderMenu';
+        reminderBox.dataset.habitId = habit.id;
+        reminderBox.style.width = '100%';
+        reminderBox.style.display = 'flex';
+        reminderBox.style.alignItems = 'center';
+        reminderBox.style.justifyContent = 'space-between';
+        reminderBox.style.gap = '12px';
+        reminderBox.style.padding = '10px 12px';
+        reminderBox.style.borderRadius = '16px';
+        reminderBox.style.border = '1px solid rgba(255,255,255,.16)';
+        reminderBox.style.background = 'rgba(255,255,255,.03)';
+        reminderBox.style.color = 'var(--text)';
+        reminderBox.style.cursor = 'pointer';
+        reminderBox.style.touchAction = 'manipulation';
+        reminderBox.style.marginTop = '8px';
+        reminderBox.setAttribute('aria-label', `Open reminder options for ${habit.name}`);
+
+        const leftText = document.createElement('div');
+        leftText.style.display = 'flex';
+        leftText.style.flexDirection = 'row';
+        leftText.style.alignItems = 'center';
+        leftText.style.gap = '10px';
+
+        const icon = document.createElement('div');
+        icon.style.fontSize = '18px';
+        icon.style.fontWeight = '900';
+        icon.textContent = !reminderTimeValid ? '🔔' : isOn ? '🔔' : '🔕';
+        icon.style.opacity = !reminderTimeValid ? '.55' : '1';
+
+        const timeText = document.createElement('div');
+        timeText.style.fontWeight = '1000';
+        timeText.style.fontSize = '13px';
+        timeText.style.opacity = !reminderTimeValid ? '.7' : '.95';
+
+        let timeLabel = 'Add reminder';
+        if (reminderTimeValid) {
+          const [hhStr, mmStr] = String(habit.alarmTime).split(':');
+          const hh = Number(hhStr);
           const mm = Number(mmStr);
-          if (!Number.isFinite(hh24) || !Number.isFinite(mm)) return { timeLabel: '', hh24: 0, mm: 0 };
-          const ampm = hh24 >= 12 ? 'PM' : 'AM';
-          const hh12 = (hh24 % 12) || 12;
+          const ampm = hh >= 12 ? 'AM' : 'PM';
+          // Note: we want 12-hour format with AM/PM
+          const hh12 = ((hh % 12) || 12);
           const mm2 = String(mm).padStart(2, '0');
-          return { timeLabel: `${hh12}:${mm2} ${ampm}`, hh24, mm };
+          timeLabel = `${hh12}:${mm2} ${ampm}`;
+        }
+
+        timeText.textContent = timeLabel;
+
+        leftText.appendChild(icon);
+        leftText.appendChild(timeText);
+
+        const badge = document.createElement('div');
+        badge.style.fontWeight = '1000';
+        badge.style.fontSize = '12px';
+        badge.style.opacity = reminderTimeValid ? '1' : '.7';
+        badge.textContent = !reminderTimeValid ? '' : isOn ? 'ON' : 'OFF';
+        badge.style.padding = reminderTimeValid ? '6px 10px' : '0';
+        badge.style.borderRadius = '999px';
+        badge.style.border = '1px solid rgba(255,255,255,.14)';
+        badge.style.background = isOn ? 'rgba(34,197,94,.14)' : 'rgba(239,68,68,.12)';
+        badge.style.color = 'rgba(232,238,252,.95)';
+
+        if (!reminderTimeValid) {
+          badge.style.border = '0';
+          badge.style.background = 'transparent';
+          badge.style.padding = '0';
+          badge.textContent = 'Add reminder';
+        }
+
+        reminderBox.appendChild(leftText);
+        reminderBox.appendChild(badge);
+
+        // Menu (floating popover)
+        const pop = document.createElement('div');
+        pop.className = 'reminder-menu alarm-popover';
+        pop.style.position = 'absolute';
+        pop.style.top = 'calc(100% + 8px)';
+        pop.style.right = '0';
+        pop.style.zIndex = '30';
+        pop.style.display = 'none';
+        pop.style.minWidth = '220px';
+        pop.style.padding = '10px 10px';
+        pop.style.borderRadius = '16px';
+        pop.style.background = 'rgba(15,23,42,.98)';
+        pop.style.border = '1px solid rgba(255,255,255,.16)';
+        pop.style.boxShadow = '0 18px 60px rgba(0,0,0,.35)';
+        pop.dataset.habitId = habit.id;
+
+        const mkMenuBtn = (label, value, action) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = label;
+          b.style.width = '100%';
+          b.style.textAlign = 'left';
+          b.style.background = 'transparent';
+          b.style.border = '0';
+          b.style.color = 'rgba(232,238,252,.95)';
+          b.style.fontWeight = '900';
+          b.style.padding = '10px 8px';
+          b.style.borderRadius = '12px';
+          b.dataset.action = action;
+          b.dataset.habitId = habit.id;
+          if (typeof value !== 'undefined') b.value = value;
+          return b;
         };
 
-        const alarm12 = parseAlarm12h(habit.alarmTime);
+        pop.appendChild(mkMenuBtn('🟢 ON', 'true', 'toggleAlarmEnabled'));
+        pop.appendChild(mkMenuBtn('🔴 OFF', 'false', 'toggleAlarmEnabled'));
 
-        // Move habit name + meta under left time row
+        const divider = document.createElement('div');
+        divider.style.height = '1px';
+        divider.style.background = 'rgba(255,255,255,.10)';
+        divider.style.margin = '8px 0';
+        pop.appendChild(divider);
+
+        // Requirement: edit time action uses existing handler name editAlarmTime
+        pop.appendChild(mkMenuBtn('✏️ Edit Time', undefined, 'editAlarmTime'));
+        pop.appendChild(mkMenuBtn('🗑 Remove Reminder', undefined, 'removeReminder'));
+
+        reminderBoxWrap.appendChild(reminderBox);
+        reminderBoxWrap.appendChild(pop);
+
+        // Remove all other reminder controls; keep only Reminder Box element.
+        left.appendChild(reminderBoxWrap);
+
         left.appendChild(name);
         left.appendChild(meta);
 
 
-        // Right actions: bell, ✓, ✕, 🗑 (no popovers except bell)
-        const actionsRight = document.createElement('div');
-        actionsRight.className = 'habit-actions';
-        actionsRight.style.gap = '8px';
-        actionsRight.style.display = 'flex';
-        actionsRight.style.alignItems = 'center';
-        actionsRight.style.flexDirection = 'row';
 
-        // Bell
-        const bellBtn = document.createElement('button');
-        bellBtn.type = 'button';
-        bellBtn.className = 'alarm-bell-btn';
-        bellBtn.dataset.action = 'toggleAlarmPopover';
-        bellBtn.dataset.habitId = habit.id;
+        const actions = document.createElement('div');
+        actions.className = 'habit-actions';
 
-        const bellIcon = document.createElement('div');
-        bellIcon.className = 'alarm-bell-icon';
-        bellIcon.textContent = alarmTimeValid ? (alarmEnabled ? '🔔' : '🔕') : '+';
-        bellBtn.appendChild(bellIcon);
-
-        const bellTime = document.createElement('div');
-        bellTime.className = 'alarm-bell-time';
-        bellTime.textContent = alarmTimeValid ? alarm12.timeLabel : '';
-        bellBtn.appendChild(bellTime);
-
-        if (alarmEnabled) bellBtn.classList.add('is-enabled');
-        else if (alarmTimeValid) bellBtn.classList.add('is-disabled');
-
-        // Popover
-        const pop = document.createElement('div');
-        pop.className = 'alarm-bell-popover';
-        pop.style.display = 'none';
-        pop.dataset.habitId = habit.id;
-
-        const ensureTimePickerDefaults = () => {
-          const now = new Date();
-          let hh24 = now.getHours();
-          let mm = now.getMinutes();
-          const ampm = hh24 >= 12 ? 'PM' : 'AM';
-          const hh12 = (hh24 % 12) || 12;
-          return { hh12, mm2: String(mm).padStart(2, '0'), ampm };
-        };
-
-        const initialPicker = (() => {
-          if (!alarmTimeValid) return ensureTimePickerDefaults();
-          const { hh24, mm } = parseAlarm12h(habit.alarmTime);
-          const ampm = hh24 >= 12 ? 'PM' : 'AM';
-          const hh12 = (hh24 % 12) || 12;
-          return { hh12, mm2: String(mm).padStart(2, '0'), ampm };
-        })();
-
-        let pickerHourVal = String(initialPicker.hh12).padStart(2, '0');
-        let pickerMinuteVal = String(initialPicker.mm2).padStart(2, '0');
-        let pickerAmPmVal = initialPicker.ampm;
-
-        const popContentHead = document.createElement('div');
-        popContentHead.className = 'alarm-bell-popover-head';
-        popContentHead.textContent = 'Alarm';
-        pop.appendChild(popContentHead);
-
-        const mkRowBtn = (label, onClick) => {
-          const b = document.createElement('button');
-          b.type = 'button';
-          b.className = 'alarm-bell-rowbtn';
-          b.textContent = label;
-          b.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            onClick();
-          });
-          return b;
-        };
-
-        let pickerExpanded = false;
-        const setPickerVisible = (v) => {
-          pickerExpanded = v;
-          pickerWrap.classList.toggle('is-hidden', !v);
-        };
-
-        const onActivate = () => {
-          habit.alarmEnabled = true;
-          save();
-          renderDashboard(els);
-          // keep popover open per requirement
-        };
-
-        const onMute = () => {
-          habit.alarmEnabled = false;
-          save();
-          renderDashboard(els);
-          // keep popover open per requirement
-        };
-
-        const onEditTime = () => {
-          setPickerVisible(true);
-        };
-
-        const onSave = () => {
-          const hNum = Number(pickerHourSelect.value);
-          const mNum = Number(pickerMinuteSelect.value);
-          const ampm = pickerAmPmSelect.value;
-          let hh24 = (hNum % 12);
-          if (ampm === 'PM') hh24 += 12;
-          const hhmm = `${String(hh24).padStart(2, '0')}:${String(mNum).padStart(2, '0')}`;
-
-          habit.alarmTime = hhmm;
-          habit.alarmEnabled = true;
-          save();
-          // close popover
-          hideBellPopover();
-          scheduleNextExactAlarm(els);
-          renderDashboard(els);
-        };
-
-        pop.appendChild(mkRowBtn('🟢 ON', onActivate));
-        pop.appendChild(mkRowBtn('🔴 MUTE', onMute));
-
-        const divider1 = document.createElement('div');
-
-        divider1.className = 'alarm-bell-divider';
-        pop.appendChild(divider1);
-
-        pop.appendChild(mkRowBtn('✏️ RESCHEDULE', onEditTime));
-        pop.appendChild(mkRowBtn('💾 SAVE CHANGES', onSave));
-
-        const pickerWrap = document.createElement('div');
-        pickerWrap.className = 'alarm-bell-picker is-hidden';
-
-        const pickerGrid = document.createElement('div');
-        pickerGrid.className = 'alarm-bell-timepicker-grid';
-
-        const hourLabel = document.createElement('label');
-        hourLabel.textContent = 'Hour';
-
-        const pickerHourSelect = document.createElement('select');
-        pickerHourSelect.className = 'alarm-bell-select alarm-bell-hour';
-        for (let i = 1; i <= 12; i++) {
-          const opt = document.createElement('option');
-          opt.value = String(i).padStart(2, '0');
-          opt.textContent = String(i).padStart(2, '0');
-          pickerHourSelect.appendChild(opt);
-        }
-        pickerHourSelect.value = pickerHourVal;
-
-        const minuteLabel = document.createElement('label');
-        minuteLabel.textContent = 'Minute';
-
-        const pickerMinuteSelect = document.createElement('select');
-        pickerMinuteSelect.className = 'alarm-bell-select alarm-bell-minute';
-        for (let i = 0; i <= 59; i++) {
-          const opt = document.createElement('option');
-          opt.value = String(i).padStart(2, '0');
-          opt.textContent = String(i).padStart(2, '0');
-          pickerMinuteSelect.appendChild(opt);
-        }
-        pickerMinuteSelect.value = pickerMinuteVal;
-
-        pickerGrid.appendChild(hourLabel);
-        pickerGrid.appendChild(pickerHourSelect);
-        pickerGrid.appendChild(minuteLabel);
-        pickerGrid.appendChild(pickerMinuteSelect);
-
-        const ampmRow = document.createElement('div');
-        ampmRow.className = 'alarm-bell-ampm';
-
-        const pickerAmPmSelect = document.createElement('input');
-        pickerAmPmSelect.type = 'hidden';
-        pickerAmPmSelect.value = pickerAmPmVal;
-
-        const amBtn = document.createElement('button');
-        amBtn.type = 'button';
-        amBtn.textContent = 'AM';
-        amBtn.className = 'is-on';
-        const pmBtn = document.createElement('button');
-        pmBtn.type = 'button';
-        pmBtn.textContent = 'PM';
-
-        const syncAmpmBtns = () => {
-          const v = pickerAmPmSelect.value;
-          amBtn.classList.toggle('is-on', v === 'AM');
-          pmBtn.classList.toggle('is-on', v === 'PM');
-        };
-        amBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          pickerAmPmSelect.value = 'AM';
-          syncAmpmBtns();
-        });
-        pmBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          pickerAmPmSelect.value = 'PM';
-          syncAmpmBtns();
-        });
-
-        syncAmpmBtns();
-
-        ampmRow.appendChild(amBtn);
-        ampmRow.appendChild(pmBtn);
-        pickerWrap.appendChild(pickerGrid);
-        pickerWrap.appendChild(ampmRow);
-
-        pop.appendChild(pickerWrap);
-
-        // external handlers for popover open/close
-        function hideBellPopover() {
-          if (state?.meta?.alarmRuntime) {
-            state.meta.alarmRuntime._openBellPopoverEl = null;
-          }
-          pop.style.display = 'none';
-        }
-
-        function showBellPopover() {
-          // close any other open
-          const other = state?.meta?.alarmRuntime?._openBellPopoverEl;
-          if (other && other !== pop) {
-            other.style.display = 'none';
-          }
-          if (state?.meta?.alarmRuntime) state.meta.alarmRuntime._openBellPopoverEl = pop;
-          pop.style.display = 'block';
-
-          // position anchored to bell button
-          const rect = bellBtn.getBoundingClientRect();
-          const vw = window.innerWidth;
-          const popW = Math.min(320, vw - 24);
-          const left = Math.max(8, Math.min(vw - popW - 8, rect.left + rect.width / 2 - popW / 2));
-          const top = rect.bottom + 8;
-
-          // prefer bottom-center; if not enough space, flip above
-          const neededBottom = top + 260;
-          const maxY = window.innerHeight - 8;
-          const finalTop = neededBottom > maxY ? rect.top - 8 : top;
-
-          pop.style.left = `${left}px`;
-          pop.style.top = `${finalTop}px`;
-        }
-
-        // Click bell toggles popover
-        bellBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          const isOpen = pop.style.display === 'block';
-          if (isOpen) {
-            hideBellPopover();
-            return;
-          }
-          showBellPopover();
-        });
-
-        // Outside/ESC close
-        const outsideClose = (ev) => {
-          const target = ev.target;
-          if (pop.contains(target) || bellBtn.contains(target)) return;
-          hideBellPopover();
-        };
-
-        const escClose = (ev) => {
-          if (ev.key !== 'Escape') return;
-          hideBellPopover();
-        };
-
-        // Attach only once per popover lifetime; store marker on pop element
-        if (!pop.__outsideCloseBound) {
-          pop.__outsideCloseBound = true;
-          document.addEventListener('pointerdown', outsideClose, { passive: true });
-          document.addEventListener('keydown', escClose);
-        }
-
-        actionsRight.appendChild(bellBtn);
-
-        // ✓ / ✕ / 🗑 (do NOT open popover)
         const doneBtn = document.createElement('button');
         doneBtn.type = 'button';
         doneBtn.className = 'check-btn';
         doneBtn.textContent = '✓';
+        doneBtn.title = 'Done';
+        doneBtn.setAttribute('aria-label', `Mark ${habit.name} done`);
         if (status === 'done') doneBtn.classList.add('is-done');
         doneBtn.dataset.action = 'setStatus';
         doneBtn.dataset.status = 'done';
@@ -1030,6 +876,8 @@
         ndBtn.type = 'button';
         ndBtn.className = 'check-btn';
         ndBtn.textContent = '✕';
+        ndBtn.title = 'Not done';
+        ndBtn.setAttribute('aria-label', `Mark ${habit.name} not done`);
         if (status === 'not_done') ndBtn.classList.add('is-nd');
         ndBtn.dataset.action = 'setStatus';
         ndBtn.dataset.status = 'not_done';
@@ -1042,19 +890,13 @@
         delBtn.setAttribute('aria-label', `Move ${habit.name} to Recycle Bin`);
         delBtn.dataset.action = 'deleteHabit';
 
-        actionsRight.appendChild(doneBtn);
-        actionsRight.appendChild(ndBtn);
-        actionsRight.appendChild(delBtn);
+        actions.appendChild(doneBtn);
+        actions.appendChild(ndBtn);
+        actions.appendChild(delBtn);
 
         item.appendChild(left);
-        item.appendChild(actionsRight);
-        item.appendChild(pop);
-
+        item.appendChild(actions);
         frag.appendChild(item);
-
-        // Skip old actions rendering below
-        continue;
-
       }
       els.habitList.appendChild(frag);
     }
@@ -1881,73 +1723,18 @@
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   }
 
-  function stopAlarmSound() {
-    try {
-      // clear any replay timers/intervals if present
-      if (state?.meta?.alarmRuntime?._alarmReplayIntervalHandle) {
-        clearInterval(state.meta.alarmRuntime._alarmReplayIntervalHandle);
-        state.meta.alarmRuntime._alarmReplayIntervalHandle = null;
-      }
-      if (state?.meta?.alarmRuntime?._alarmReplayTimeoutHandle) {
-        clearTimeout(state.meta.alarmRuntime._alarmReplayTimeoutHandle);
-        state.meta.alarmRuntime._alarmReplayTimeoutHandle = null;
-      }
-
-      const runtime = state?.meta?.alarmRuntime;
-      if (runtime) {
-        // hard gate: prevent any immediate re-play from tick/trigger paths
-        runtime._stopEpoch = (runtime._stopEpoch || 0) + 1;
-      }
-
-      const candidates = [];
-
-      // main active reference
-      const a = runtime?._activeAudio;
-      if (a) candidates.push(a);
-
-      // preloaded instances
-      const preloaded = runtime?._preloadedAlarmAudio;
-      if (preloaded && typeof preloaded === 'object') {
-        for (const val of Object.values(preloaded)) {
-          if (val) candidates.push(val);
-        }
-      }
-
-      // stop/pause ALL known alarm audio objects
-      for (const c of candidates) {
-        try {
-          if (typeof c.pause === 'function') c.pause();
-        } catch {}
-        try {
-          c.currentTime = 0;
-        } catch {}
-        try {
-          c.loop = false;
-        } catch {}
-      }
-
-      // remove potential handlers that might re-trigger
-      for (const c of candidates) {
-        try {
-          if (typeof c.onended !== 'undefined') c.onended = null;
-        } catch {}
-      }
-
-      // reset active reference
-      if (runtime) runtime._activeAudio = null;
-
-      try {
-        console.log('[audio-stop-complete]');
-      } catch {}
-    } catch {}
-  }
-
-
-  // Backward-compatible alias (existing code calls stopAlarmAudio)
   function stopAlarmAudio() {
-    stopAlarmSound();
+    try {
+      const a = state?.meta?.alarmRuntime?._activeAudio;
+      if (a && typeof a.pause === 'function') {
+        a.pause();
+        a.currentTime = 0;
+      }
+    } catch {
+      // ignore
+    }
+    if (state?.meta?.alarmRuntime) state.meta.alarmRuntime._activeAudio = null;
   }
-
 
   function playAlarmAudio(url) {
     stopAlarmAudio();
@@ -2135,100 +1922,34 @@
 
 
   function closeAlarmModal(els) {
-    try {
-      stopAlarmSound();
-    } catch {}
-
-    // Always repair runtime flags
-    if (state?.meta?.alarmRuntime) {
-      state.meta.alarmRuntime._modalOpen = false;
-      state.meta.alarmRuntime.activeHabitId = null;
-    }
-
     hideModalSafely(els.alarmModal);
-
-    try {
-      const a = els.alarmModal;
-      if (a) {
-        // remove any inert/blocking flags
-        try {
-          a.inert = false;
-        } catch {}
-        a.style.display = 'none';
-        a.classList.remove('is-open', 'open', 'show', 'active');
-        a.setAttribute('aria-hidden', 'true');
-      }
-
-      // remove aria/inert blocking if your modal implementation also uses wrapper/body
-      // (keep this DOM-only and never touch any persistence logic)
-      if (els.alarmModal) {
-        try {
-          els.alarmModal.removeAttribute('inert');
-        } catch {}
-      }
-    } catch {}
-
-    try {
-      console.log('[modal-close]');
-    } catch {}
   }
 
 
-
-
-
   function stopAlarmOccurrence(els) {
-    const runtime = state?.meta?.alarmRuntime;
-    const activeHabitId = runtime?.activeHabitId;
+    const activeHabitId = state?.meta?.alarmRuntime?.activeHabitId;
 
-    try {
-      console.log('[modal-stop]');
-    } catch {}
-
-    // Stop sound immediately (before/while closing).
-    stopAlarmSound();
-    console.log('[audio-stop]');
-
+    // Stop sound immediately.
+    stopAlarmAudio();
     closeAlarmModal(els);
 
+    // Persist per-habit dismissal for today.
     if (activeHabitId) {
       ensureStateShape();
-
-      const habit = state.habits.find((h) => h.id === activeHabitId);
-      const alarmTimeHHMM = habit?.alarmTime;
-
-      // Required occurrence dismissal key: YYYY-MM-DD:HH:MM
+      state.meta.habitAlarmDismissals = state.meta.habitAlarmDismissals || {};
       const tKey = todayKey();
-      const dismissalKey = `${tKey}:${alarmTimeHHMM}`;
+      state.meta.habitAlarmDismissals[activeHabitId] = tKey;
 
-      // Migrate old dismissals: if stored value is only YYYY-MM-DD, remove it (avoid mixed formats)
-      const dismissals = state.meta.habitAlarmDismissals = state.meta.habitAlarmDismissals || {};
-      const stored = dismissals[activeHabitId];
-      if (typeof stored === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(stored)) {
-        try {
-          delete dismissals[activeHabitId];
-        } catch {}
+      // IMPORTANT: also mark runtime de-dupe for this habit.
+      // This prevents re-entry inside the same tick/interval window.
+      if (state?.meta?.alarmRuntime) {
+        const curHHMM = hhmmNow(new Date());
+        const minuteKey = `${tKey}:${curHHMM}`;
+        state.meta.alarmRuntime._lastFiredMinute = state.meta.alarmRuntime._lastFiredMinute || {};
+        state.meta.alarmRuntime._lastFiredMinute[activeHabitId] = minuteKey;
+        state.meta.alarmRuntime._lastFiredDayByHabit = state.meta.alarmRuntime._lastFiredDayByHabit || {};
+        state.meta.alarmRuntime._lastFiredDayByHabit[activeHabitId] = tKey;
       }
-
-      dismissals[activeHabitId] = dismissalKey;
-
-      // Add fired occurrence storage so scheduler can never retrigger this same occurrence.
-      // Required: persist exact STOP dismissal and mark the exact occurrence as fired.
-      // occurrenceKey = habitId|YYYY-MM-DD|HH:MM
-      if (runtime) {
-        runtime._firedOccurrences = runtime._firedOccurrences || {};
-        const occurrenceKey = `${activeHabitId}|${tKey}|${alarmTimeHHMM}`;
-        runtime._firedOccurrences[occurrenceKey] = true;
-      }
-
-      // Required: write STOP dismissal to localStorage immediately.
-      // (save() is called once per STOP; do not defer until after modal close.)
-      save();
-
-
-      try {
-        console.log('[alarm-dismissed]', { habitId: activeHabitId, dismissalKey });
-      } catch {}
 
       try {
         save();
@@ -2244,7 +1965,6 @@
       state.meta.alarmRuntime._modalOpen = false;
     }
   }
-
 
 
 
@@ -2287,94 +2007,31 @@
   }
 
   function shouldTriggerAlarm(habit, now) {
-    // Required: return exact false reasons via minimal console logging.
-    // Keep logic unchanged except for defaulting to DAILY when no specific days are selected.
+    if (!habit?.alarmTime) return false;
+    if (habit.alarmEnabled !== true) return false;
 
-    const habitId = habit?.id;
-    const alarmTime = habit?.alarmTime;
-    const enabled = habit?.alarmEnabled === true;
+
+    // Per-habit STOP dismissal: if user pressed STOP for this habit today, never trigger again today.
+    // Stored under state.meta.habitAlarmDismissals[habitId] = YYYY-MM-DD
     const tKey = todayKey(now);
-
-    // Gate: deleted/trashed habit should never ring.
-    if (habitId && state?.meta?.habitTrash && Array.isArray(state.meta.habitTrash)) {
-      const isTrashed = state.meta.habitTrash.some((t) => t?.habit?.id === habitId);
-      if (isTrashed) {
-        console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'deleted/trashed' });
-        return false;
-      }
-    }
-
-    if (!enabled) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'alarmEnabled false' });
-      return false;
-    }
-
-    if (!alarmTime) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'missing alarmTime' });
-      return false;
-    }
-
-    // Validate HH:MM format early
-    const alarmTimeStr = String(alarmTime);
-    if (!/^\d{2}:\d{2}$/.test(alarmTimeStr)) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'invalid alarmTime format', alarmTime: alarmTimeStr });
-      return false;
-    }
-
-    // Per-habit STOP dismissal: skip ONLY the exact STOP occurrence (YYYY-MM-DD:HH:MM).
-    // Legacy formats that store only the day key must NOT block rescheduled alarms.
     const dismissals = state?.meta?.habitAlarmDismissals;
-    const expectedDismissalKey = `${tKey}:${alarmTimeStr}`;
-    const storedDismissal = habitId && dismissals ? dismissals[habitId] : undefined;
+    if (habit?.id && dismissals && dismissals[habit.id] === tKey) return false;
 
-    console.log('[alarm][dismissal-check]', {
-      habitId,
-      storedDismissal,
-      expectedDismissalKey,
-      alarmTime: alarmTimeStr,
-    });
+    // never trigger while modal is open; STOP/SNOOZE/X controls audio.
+    if (state?.meta?.alarmRuntime?._modalOpen) return false;
 
-    if (habitId && dismissals && storedDismissal === expectedDismissalKey) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'stop-dismissal for this occurrence' });
-      return false;
-    }
-
-
-    // never trigger while modal is open
-    if (state?.meta?.alarmRuntime?._modalOpen) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'modalOpen' });
-      return false;
-    }
 
     // Weekday gating (Specific Days)
     const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-    // Important: If habit has no selected specific days => treat as DAILY.
-    const hasSpecificSelection = Array.isArray(habit.alarmWeekdaysSelected) && habit.alarmWeekdaysSelected.length > 0;
-    const selected = hasSpecificSelection ? habit.alarmWeekdaysSelected : allWeekdays;
-
+    const selected =
+      Array.isArray(habit.alarmWeekdaysSelected) && habit.alarmWeekdaysSelected.length ? habit.alarmWeekdaysSelected : allWeekdays;
     const todayName = weekdayNameForDate(now);
-    if (!selected.includes(todayName)) {
-      console.log('[alarm][shouldTriggerAlarm-false]', {
-        habitId,
-        reason: 'selectedDays/specificDays mismatch',
-        todayName,
-        selected,
-      });
-      return false;
-    }
+    if (!selected.includes(todayName)) return false;
 
     // NOTE: scheduler tick handles time-match + grace/catch-up.
     // shouldTriggerAlarm must ONLY decide whether firing is allowed.
-    console.log('[alarm][shouldTriggerAlarm-true]', {
-      habitId,
-      alarmTime: alarmTimeStr,
-      currentHHMM: hhmmNow(now),
-      today: tKey,
-    });
     return true;
   }
-
 
 
 
@@ -2421,19 +2078,8 @@
       // Weekday gating (Specific Days)
       if (!shouldTriggerAlarm(habit, now)) continue;
 
-      // STOP blocks NORMAL reminder for this habit today ONLY if it matches an exact occurrence key.
-      // We keep legacy “day-only” formats from blocking reschedules.
-      if (dismissedMap && typeof dismissedMap[habit.id] === 'string') {
-        if (dismissedMap[habit.id] === dayKey || dismissedMap[habit.id] === `${dayKey}:${habit.alarmTime}`) {
-          const stored = dismissedMap[habit.id];
-          if (/^\d{4}-\d{2}-\d{2}$/.test(stored)) {
-            // legacy day-only dismissal: ignore here so rescheduled HH:MM can fire
-          } else if (stored === `${dayKey}:${habit.alarmTime}`) {
-            continue;
-          }
-        }
-      }
-
+      // STOP blocks NORMAL reminder for this habit today.
+      if (dismissedMap && dismissedMap[habit.id] === dayKey) continue;
 
       const scheduledMs = getHabitScheduledLocalMs(habit, now);
       if (scheduledMs == null) continue;
@@ -2486,8 +2132,6 @@
 
               state.meta.alarmRuntime._modalOpen = true;
               state.meta.alarmRuntime.activeHabitId = habit.id;
-              state.meta.alarmRuntime._modalOpenAtMs = Date.now();
-
 
               stopAlarmAudio();
               playAlarmAudio(alarmSoundUrlForHabit(habit));
@@ -2506,39 +2150,13 @@
       for (const habit of state.habits || []) {
         if (!habit?.id) continue;
         if (!habit?.alarmTime) continue;
-        // (required trace)
-        console.log('[alarm-check]', {
-          habitName: habit.name,
-          habitId: habit.id,
-          alarmTime: habit.alarmTime,
-          currentHHMM: hhmmNow(now),
-          enabled: habit.alarmEnabled === true,
-        });
+        if (!shouldTriggerAlarm(habit, now)) continue;
 
-        if (!shouldTriggerAlarm(habit, now)) {
-          console.log('[alarm-skip]', { habitId: habit.id, reason: 'shouldTriggerAlarm-false' });
-          continue;
-        }
-
-        // STOP dismissal blocks NORMAL reminder only for the exact HH:MM.
-        // (Note: this uses exact HH:MM key we store on STOP.)
-        const dismissalKey = `${dayKey}:${habit.alarmTime}`;
-        if (dismissedMap && dismissedMap[habit.id] === dismissalKey) {
-          console.log('[alarm-skip]', {
-            habitId: habit.id,
-            reason: 'stopped-exact-time',
-            dayKey,
-            alarmTime: habit.alarmTime,
-          });
-          continue;
-        }
+        // STOP dismissal blocks normal reminders for the day.
+        if (dismissedMap && dismissedMap[habit.id] === dayKey) continue;
 
         const scheduledMs = getHabitScheduledLocalMs(habit, now);
-        if (scheduledMs == null) {
-          console.log('[alarm-skip]', { habitId: habit.id, reason: 'invalid-alarmTime-format' });
-          continue;
-        }
-
+        if (scheduledMs == null) continue;
 
         const lateMs = now.getTime() - scheduledMs;
         if (lateMs < 0) continue;
@@ -2643,14 +2261,10 @@
   function startAlarmScheduler(els) {
     if (alarmTimerHandle) return;
 
-    console.log('[alarm-init]');
 
     // initialize runtime flags
     ensureStateShape();
     state.meta.alarmRuntime._modalOpen = false;
-
-    console.log('[alarm-scheduler-started]');
-
 
     state.meta.alarmRuntime._lastFiredMinute = state.meta.alarmRuntime._lastFiredMinute || {}; // habitId -> 'YYYY-MM-DD:HH:MM'
     state.meta.alarmRuntime._lastFiredDayByHabit = state.meta.alarmRuntime._lastFiredDayByHabit || {}; // habitId -> 'YYYY-MM-DD'
@@ -2749,7 +2363,6 @@
 
     const tick = () => {
       try {
-        console.log('[alarm-tick]', new Date().toISOString());
         // heartbeat (throttle logging)
         const now = new Date();
         const nowMs = now.getTime();
@@ -2815,10 +2428,7 @@
           if (!habitId) continue;
 
           const dismissals = state?.meta?.habitAlarmDismissals;
-          // STOP dismissal is stored as an exact occurrence key: YYYY-MM-DD:HH:MM
-          const dismissalKey = `${tNowDayKey}:${habit.alarmTime}`;
-          const dismissedToday = dismissals && dismissals[habitId] === dismissalKey;
-
+          const dismissedToday = dismissals && dismissals[habitId] === tNowDayKey;
 
           console.log('[alarm] scan habit', {
             habitId,
@@ -2867,9 +2477,11 @@
             continue;
           }
 
-          // De-dupe must be occurrence-based; day-only blocks break reschedule.
-          // Remove day-only gate so rescheduled HH:MM can still fire.
-
+          const lastDay = state.meta.alarmRuntime._lastFiredDayByHabit[habitId];
+          if (lastDay === tNowDayKey) {
+            console.log('[alarm] skipped (already fired today)');
+            continue;
+          }
 
           // Prevent firing right after add: require at least 60s elapsed since creation.
           const createdAt = safeNumber(habit.createdAt, 0);
@@ -3281,117 +2893,15 @@
       if (action === 'editAlarmTime') {
         const habit = state.habits.find((h) => h.id === habitId);
         if (!habit) return;
-
-        const runtimeState = state?.meta?.alarmRuntime;
-        const oldTime = habit.alarmTime;
-
-
-        const rawInput = btn.value;
-        // Accept formats:
-        // - HH:MM (24h)
-        // - H:MM AM/PM
-        // - HH:MM AM/PM
-        // NOTE: Do NOT silently convert invalid inputs.
-        const parsed12h = (() => {
-          if (typeof rawInput !== 'string') return null;
-          const s = rawInput.trim();
-          if (!s) return null;
-          // Allow optional space before AM/PM, and both H or HH.
-          const m = s.match(/^([01]?\d|1[0-2]):([0-5]\d)\s*(AM|PM)$/i);
-          if (!m) return null;
-          const hh12 = safeNumber(m[1], NaN);
-          const mm = safeNumber(m[2], NaN);
-          if (!Number.isFinite(hh12) || !Number.isFinite(mm)) return null;
-          const ampm = String(m[3]).toUpperCase();
-          let hh24 = hh12 % 12;
-          if (ampm === 'PM') hh24 += 12;
-          return `${String(hh24).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-        })();
-
-        let normalized = null;
-        if (typeof rawInput === 'string' && /^\d{1,2}:\d{2}$/.test(rawInput.trim())) {
-          // If it's 1-digit hour, normalize as 24h time.
-          const s = rawInput.trim();
-          const m = s.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
-          if (m) {
-            normalized = `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
-          }
-        } else {
-          normalized = normalizeAlarmTimeToHHMM(rawInput);
-          if (!normalized && parsed12h) normalized = parsed12h;
-        }
-
-        // Required log
-        console.log('[reschedule-time-parse]', { rawInput, parsedHHMM: parsed12h, oldTime, newTime: normalized });
-
-        // If invalid, do not save/reschedule.
-        if (!normalized) {
-          try {
-            alert('Invalid time format. Use HH:MM, H:MM AM/PM, or HH:MM AM/PM.');
-          } catch {}
-          return;
-        }
-
-
-        // Required: reschedule must clear every runtime gating key for this habit
-        // so the new HH:MM behaves like a brand-new alarm occurrence.
-        const runtime = state?.meta?.alarmRuntime;
-        if (runtime && habit?.id) {
-          const tKey = todayKey();
-
-          // Clear de-dupe keys + STOP dismissal for this habit.
-          if (runtime._lastFiredDayByHabit && runtime._lastFiredDayByHabit[habit.id]) {
-            delete runtime._lastFiredDayByHabit[habit.id];
-          }
-          if (runtime._lastFiredMinute && runtime._lastFiredMinute[habit.id]) {
-            delete runtime._lastFiredMinute[habit.id];
-          }
-
-          if (state?.meta?.habitAlarmDismissals && state.meta.habitAlarmDismissals[habit.id]) {
-            // STOP dismissal is stored as YYYY-MM-DD:HH:MM (exact occurrence), but we can safely delete.
-            delete state.meta.habitAlarmDismissals[habit.id];
-          }
-
-          // Clear any snooze override for this habit.
-          if (runtime._snoozeOverride && runtime._snoozeOverride.habitId === habit.id) {
-            runtime._snoozeOverride = null;
-          }
-
-          // Clear modal/active flags only if they were for this habit.
-          if (runtime.activeHabitId === habit.id) {
-            runtime.activeHabitId = null;
-            runtime._modalOpen = false;
-          }
-
-          // Also clear any persisted missed-alarm markers to avoid stale recovery.
-          if (state?.meta?.habitAlarmLastDue && state.meta.habitAlarmLastDue[habit.id] === tKey) {
-            delete state.meta.habitAlarmLastDue[habit.id];
-          }
-        }
-
-        // Apply new schedule.
+        const newTime = btn.value;
+        const normalized = normalizeAlarmTimeToHHMM(newTime);
         habit.alarmTime = normalized;
         habit.alarmEnabled = normalized ? true : false;
-
-        // If time is valid, ensure it is treated as a fresh enable.
-        if (normalized && habit?.id) {
-          if (state?.meta?.alarmRuntime && state.meta.alarmRuntime._lastFiredDayByHabit) {
-            delete state.meta.alarmRuntime._lastFiredDayByHabit[habit.id];
-          }
-          if (state?.meta?.alarmRuntime && state.meta.alarmRuntime._lastFiredMinute) {
-            delete state.meta.alarmRuntime._lastFiredMinute[habit.id];
-          }
-          if (state?.meta?.habitAlarmDismissals && state.meta.habitAlarmDismissals[habit.id]) {
-            delete state.meta.habitAlarmDismissals[habit.id];
-          }
-        }
-
         save();
-        renderDashboard(els);
         scheduleNextExactAlarm(els);
+        renderDashboard(els);
         return;
       }
-
 
       if (action === 'removeReminder') {
         const habit = state.habits.find((h) => h.id === habitId);
