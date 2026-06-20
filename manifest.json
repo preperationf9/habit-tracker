@@ -2,8 +2,9 @@
   "name": "Daily Habit Tracker",
   "short_name": "DHT",
   "id": "./",
-  "start_url": "./index.html",
-  "scope": "./",
+  "start_url": "/index.html",
+  "scope": "/",
+
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#0f172a",
@@ -11,7 +12,8 @@
   "categories": ["productivity", "health"],
   "icons": [
     {
-      "src": "icon.png",
+      "src": "/icon.png",
+
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
