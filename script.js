@@ -1949,7 +1949,7 @@
   }
 
 
-  function playAlarmAudio(url) {
+function playAlarmAudio(url) {
     stopAlarmAudio();
 
     if (state?.meta?.settings && state.meta.settings.sound === false) return;
@@ -1967,10 +1967,12 @@
         a.currentTime = 0;
       } catch {}
 
-      // Unlock gate: try to play only after a user gesture unlock.
+      // Always remember the pending url so unlock flow can retry.
+      state.meta.alarmRuntime._pendingAlarmAudioUrl = url;
+
+      // Attempt to play only if we believe sound is unlocked.
       if (!window.__alarmAudioUnlocked) {
         showTapToEnableMessage();
-        state.meta.alarmRuntime._pendingAlarmAudioUrl = url;
         return;
       }
 
@@ -1979,14 +1981,12 @@
           const p = a.play();
           if (p && typeof p.then === 'function') {
             p.then(() => {}).catch(() => {
-              // If play() rejects even after gesture, prompt and retry on popup tap.
+              // If play() rejects even after unlock, show fallback button.
               showTapToEnableMessage();
-              state.meta.alarmRuntime._pendingAlarmAudioUrl = url;
             });
           }
         } catch {
           showTapToEnableMessage();
-          state.meta.alarmRuntime._pendingAlarmAudioUrl = url;
         }
       };
 
