@@ -363,9 +363,30 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
 .modal-actions .ghost-btn, .modal-actions .glow-btn{flex:0 0 auto}
 
+
 .settings-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.10)}
 .setting-label{font-weight:900}
 .setting-sub{color:var(--muted);font-size:12px;margin-top:6px;line-height:1.4}
+
+/* =============================
+   Account section (Settings)
+   UI-only: no signOut logic.
+   ============================= */
+.account-section{margin-top:14px;padding:14px 14px;border-radius:18px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.10)}
+.account-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}
+.account-label{color:var(--muted);font-size:12px;font-weight:900}
+.account-value{font-weight:1000;color:rgba(232,238,252,.95);font-size:12.5px;text-align:right;word-break:break-word}
+.account-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.account-hint{color:var(--muted);font-size:12px;margin-top:12px;line-height:1.45}
+
+/* Hide/show helpers */
+.is-hidden{display:none}
+
+/* Account section should toggle buttons without affecting other .is-hidden usage */
+#accountSection{display:block}
+
+
+
 
 .weekly-table table{width:100%}
 
@@ -762,11 +783,37 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
 }
 .auth-badge-dot{opacity:.95}
 
+/* Center auth card (all screen sizes) */
+#authOverlay,
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483647;
+}
 
-
-
+#authOverlay.is-open,
 .auth-overlay.is-open{
-  display:block;
+  display: flex;
+}
+
+#authOverlay .auth-overlay-card,
+.auth-overlay .auth-overlay-card{
+  margin: 0;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: calc(100% - 32px);
+  max-width: 420px;
+  position: relative;
+  background:rgba(15,23,42,.98);
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:22px;
+  padding:18px;
+  color:var(--text);
+  box-shadow:0 18px 60px rgba(0,0,0,.45);
 }
 
 .auth-overlay-backdrop{
@@ -775,19 +822,6 @@ input:focus{box-shadow:0 0 0 4px var(--ring);border-color:rgba(124,92,255,.55)}
   background:rgba(0,0,0,.62);
 }
 
-.auth-overlay-card{
-  position:relative;
-  margin: 16px auto;
-  width: min(540px, calc(100% - 32px));
-  top: 50%;
-  transform: translateY(-50%);
-  background:rgba(15,23,42,.98);
-  border:1px solid rgba(255,255,255,.16);
-  border-radius:22px;
-  padding:18px;
-  color:var(--text);
-  box-shadow:0 18px 60px rgba(0,0,0,.45);
-}
 
 .auth-overlay-head{
   display:flex;

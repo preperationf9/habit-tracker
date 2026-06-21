@@ -8,7 +8,55 @@
 
   const XP = { completeHabit: 10 };
 
+  // --- Firebase compat ensure (TOP LEVEL, before app boot) ---
+  // Required because some boot-paths may not run before you need window.auth.
+  // index_fixed.html loads firebaseConfig.js + firebase compat SDKs before this script.
+  (() => {
+    try {
+      if (!window.firebase) {
+        window.FIREBASE_READY = false;
+        console.warn('[firebase-top] skipped: firebase sdk missing');
+        return;
+      }
+
+      const fb = window.firebase;
+      const cfg = window.firebaseConfig;
+
+      console.log('[firebase-top] fb', !!fb);
+      console.log('[firebase-top] cfg', !!cfg);
+      console.log('[firebase-top] init', typeof fb?.initializeApp);
+      console.log('[firebase-top] apps before', fb?.apps?.length);
+
+      // Repair/initialize only once if config is present and no apps exist.
+      try {
+        if (fb && cfg && Array.isArray(fb.apps) && fb.apps.length === 0 && typeof fb.initializeApp === 'function') {
+          fb.initializeApp(cfg);
+        }
+      } catch (e) {
+        // continue to set window.* guards below
+        console.warn('[firebase compat] initializeApp failed:', e);
+      }
+
+      // Expose auth/db only if apps are now present.
+      window.auth = fb && typeof fb.auth === 'function' ? fb.auth() : undefined;
+      window.db = (fb && typeof fb.firestore === 'function') ? fb.firestore() : null;
+      window.FIREBASE_READY = !!(fb && Array.isArray(fb.apps) && fb.apps.length > 0);
+
+      console.log('[firebase compat]', {
+        apps: fb?.apps?.length,
+        ready: window.FIREBASE_READY,
+        auth: !!window.auth,
+      });
+    } catch (err) {
+      window.FIREBASE_READY = false;
+      try {
+        console.warn('[firebase compat] init failed:', err);
+      } catch {}
+    }
+  })();
+
   // Streak is calculated from persistent activity history (dates where user completed at least one habit).
+
   // IMPORTANT: streak must NOT depend on current habit checkbox state.
 
 
@@ -1670,11 +1718,129 @@
     els.monthlyTable.appendChild(wrapper);
   }
 
-  function renderSettings() {}
+  function renderSettings() {
+    renderAccountAuthUi();
+  }
+
+
+  // =============================
+  // Account (UI-only)
+  // =============================
+
+  function renderAccountAuthUi() {
+    try {
+      const uid = (() => {
+        try {
+          return localStorage.getItem('habitTracker.auth.uid');
+        } catch {
+          return null;
+        }
+      })();
+
+      const displayName = (() => {
+        try {
+          return localStorage.getItem('habitTracker.auth.displayName');
+        } catch {
+          return null;
+        }
+      })();
+
+      const email = (() => {
+        try {
+          return localStorage.getItem('habitTracker.auth.email');
+        } catch {
+          return null;
+        }
+      })();
+
+      const accountSection = document.getElementById('accountSection');
+      const nameEl = document.getElementById('accountUserName');
+      const emailEl = document.getElementById('accountUserEmail');
+      const signInBtn = document.getElementById('accountSignInBtn');
+      const logoutBtn = document.getElementById('accountLogoutBtn');
+
+      if (!accountSection || !nameEl || !emailEl || !signInBtn || !logoutBtn) return;
+
+      const isGuest = !uid;
+
+      nameEl.textContent = displayName || '—';
+      emailEl.textContent = email || '—';
+
+      // Guest mode: show Sign In, hide Logout
+      // Google logged-in: show Name/Email, hide Sign In, show Logout
+      // Requirement: logout button UI-only. Click does nothing (no overlay, no signOut).
+      if (isGuest) {
+        signInBtn.style.display = '';
+        logoutBtn.style.display = 'none';
+        document.getElementById('accountGuestHint')?.classList.remove('is-hidden');
+      } else {
+        signInBtn.style.display = 'none';
+        logoutBtn.style.display = '';
+        document.getElementById('accountGuestHint')?.classList.add('is-hidden');
+      }
+
+      // Wire click handlers once.
+      if (!signInBtn.__wiredAccountUi) {
+        signInBtn.__wiredAccountUi = true;
+        signInBtn.addEventListener('click', () => {
+          // Existing auth overlay controller is UI-only; open login screen.
+          if (typeof window.showHabitLogin === 'function') {
+            window.showHabitLogin();
+          }
+        });
+      }
+
+      if (!logoutBtn.__wiredAccountUi) {
+        logoutBtn.__wiredAccountUi = true;
+        logoutBtn.addEventListener('click', async () => {
+          // Real logout: attempt Firebase signOut if available.
+          // Must not throw if Firebase auth is missing.
+          try {
+            if (window.auth && typeof window.auth.signOut === 'function') {
+              await window.auth.signOut();
+            } else if (window.firebase?.auth && typeof window.firebase.auth === 'function') {
+              const auth = window.firebase.auth();
+              if (auth?.currentUser && typeof auth.signOut === 'function') await auth.signOut();
+            }
+          } catch {
+            // swallow - UI will still update
+          }
+
+          // Remove only auth keys; keep habit data intact.
+          try {
+            localStorage.removeItem('habitTracker.auth.uid');
+            localStorage.removeItem('habitTracker.auth.mode');
+            localStorage.removeItem('habitTracker.auth.displayName');
+            localStorage.removeItem('habitTracker.auth.email');
+
+            // keep decided flag = true
+            localStorage.setItem('habitTracker.auth.decided', 'true');
+          } catch {}
+
+          // Re-render account UI immediately.
+          renderAccountAuthUi();
+
+          // Switch top-right badge to Guest.
+          try {
+            const badge = document.getElementById('authStateBadge');
+            const badgeText = document.getElementById('authStateBadgeText');
+            if (badge) {
+              badge.style.display = 'flex';
+              if (badgeText) badgeText.textContent = 'Guest';
+              const dot = badge.querySelector('.auth-badge-dot');
+              if (dot) dot.style.background = 'rgba(124,92,255,.95)';
+            }
+          } catch {}
+        });
+      }
+
+    } catch {}
+  }
 
   // =============================
   // Trash
   // =============================
+
 
   function openTrashConfirmModal(els, habitId, habitName) {
     ensureStateShape();
@@ -3791,11 +3957,16 @@ function playAlarmAudio(url) {
     startAlarmScheduler(els);
   }
 
+  // ensureFirebaseReady + redundant compat init paths removed.
+  // Firebase initialization is handled exactly once at the top of this file.
+
   function boot() {
     // IMPORTANT: App must always call init()/boot() first.
     // Phase 1 part-2: controller wiring only (UI overlay + click handlers).
 
     init();
+
+    // Firebase initialization is handled exactly once at the top of this file.
 
     // Service Worker + Notification permission (alarm-related; optional, non-fatal)
     try {
@@ -3826,20 +3997,8 @@ function playAlarmAudio(url) {
       }
     } catch {}
 
-    // Phase 3 Step 1: Firebase initialization only (no Auth/Firestore usage yet).
+    // Phase 3 Step 1 removed: Firebase initialization is handled exactly once at the top of this file (compat).
 
-    // Must never crash the app if Firebase or config is missing.
-    try {
-      if (firebaseConfig && typeof firebaseConfig === 'object') {
-        initializeApp(firebaseConfig);
-      }
-    } catch (e) {
-      try {
-        console.warn('[firebase] init failed (non-fatal):', e && e.message ? e.message : e);
-      } catch {
-        // ignore
-      }
-    }
 
     // Overlay controller wiring (UI-only placeholders; no Firebase yet).
 
@@ -3875,29 +4034,91 @@ function playAlarmAudio(url) {
 
       function closeOverlay() {
         try {
-          overlay.setAttribute('aria-hidden', 'true');
+          // Accessibility fix: prevent aria-hidden from being set while a descendant still holds focus.
+          // Root cause: Close clicked -> focus remains on #authOverlayCloseBtn (inside overlay)
+          // then aria-hidden=true is applied, triggering the browser warning.
+          const prevActive = document.activeElement;
+          const btnInside = prevActive && overlay.contains(prevActive);
+          if (btnInside) {
+            // Move focus to a safe, visible element outside the overlay.
+            // (Prefer a body-focusable target; fall back to document.body.)
+            const safeTarget = document.querySelector('main, [tabindex="0"], button, a') || document.body;
+            try {
+              safeTarget && typeof safeTarget.focus === 'function' && safeTarget.focus({ preventScroll: true });
+            } catch {
+              try {
+                safeTarget && typeof safeTarget.focus === 'function' && safeTarget.focus();
+              } catch {}
+            }
+          }
+
           overlay.classList.remove('is-open');
           if (backdrop) backdrop.setAttribute('aria-hidden', 'true');
+          overlay.setAttribute('aria-hidden', 'true');
         } catch {
           // ignore
         }
       }
 
-      // Default behavior: keep overlay hidden for full backward compatibility.
-      // Only show overlay if a specific flag is set.
-      const shouldShow = (() => {
+      // Auth screen visibility (startup only)
+      // Requirement: show overlay on first app open unless user is already logged in
+      // or previously chose Guest. Guest must not repeatedly block.
+      // Auth overlay gating: ONLY use approved keys.
+      // - habitTracker.auth.decided: whether a login choice has been made on this device
+      // - habitTracker.auth.mode: 'guest' | 'google' (optional)
+      // - habitTracker.auth.uid: Firebase uid if signed-in
+      const shouldShowAuthOverlay = (() => {
         try {
-          return localStorage.getItem('habitTracker.auth.showOverlay') === 'true';
+          const decided = localStorage.getItem('habitTracker.auth.decided') === 'true';
+          const uid = localStorage.getItem('habitTracker.auth.uid');
+          if (uid) return false;
+          return !decided;
         } catch {
-          return false;
+          return true;
         }
       })();
 
-      if (shouldShow) {
+      // Mark that the decision was made at least once.
+      try {
+        localStorage.setItem('habitTracker.auth.decided', 'true');
+      } catch {}
+
+
+      if (shouldShowAuthOverlay) {
         setStatus('Choose a login method to continue.');
         openOverlay();
       } else {
         closeOverlay();
+      }
+
+      function getFirebaseAuthCompat() {
+        // Prefer the already-initialized Auth instance.
+        if (window && window.auth) return window.auth;
+
+        // Compat SDK: window.firebase.auth is available after initializeApp.
+        if (
+          window &&
+          window.firebase &&
+          Array.isArray(window.firebase.apps) &&
+          window.firebase.apps.length > 0 &&
+          typeof window.firebase.auth === 'function'
+        ) {
+          try {
+            window.auth = window.firebase.auth();
+            return window.auth;
+          } catch {}
+        }
+
+        return null;
+      }
+
+      function setAuthStatusIfUnavailable() {
+        const auth = getFirebaseAuthCompat();
+        if (!auth) {
+          setStatus('Auth not available.');
+          return null;
+        }
+        return auth;
       }
 
       // Button handlers: placeholders only (no Firebase yet)
@@ -3905,14 +4126,15 @@ function playAlarmAudio(url) {
         // STEP 2B: Firebase Auth only (no Firestore, no sync).
         setStatus('Signing in with Google...');
         try {
-          if (typeof getAuth !== 'function') {
-            setStatus('Firebase Auth SDK not available. Configure Firebase config.');
+          const auth = getFirebaseAuthCompat();
+          if (!auth) {
+            setStatus('Auth not available.');
             return;
           }
-          const auth = getAuth();
-      // NOTE: Firebase OAuth requires a browser redirect/pop-up. This is optional/non-blocking.
-          const provider = new GoogleAuthProvider();
-          await signInWithPopup(auth, provider);
+
+          const provider = new window.firebase.auth.GoogleAuthProvider();
+          await auth.signInWithPopup(provider);
+
 
           // STEP 2E prep: queue scaffolding (collect-only; no sync execution).
           // Ensure queue key exists; do not run Firestore.
@@ -3924,6 +4146,8 @@ function playAlarmAudio(url) {
           if (user && user.uid) {
             setStatus('Signed in.');
             try {
+              localStorage.setItem('habitTracker.auth.decided', 'true');
+              localStorage.setItem('habitTracker.auth.mode', 'google');
               localStorage.setItem('habitTracker.auth.uid', user.uid);
             } catch {}
             closeOverlay();
@@ -3940,10 +4164,11 @@ function playAlarmAudio(url) {
       });
 
       const otpSection = document.getElementById('authOtpSection');
-      const otpStatusEl = document.getElementById('authOtpStatus');
+      const phoneOtpStatusEl = document.getElementById('phoneOtpStatus');
       function setOtpStatus(msg) {
-        if (otpStatusEl) otpStatusEl.textContent = msg;
+        if (phoneOtpStatusEl) phoneOtpStatusEl.textContent = msg;
       }
+
 
       phoneBtn?.addEventListener('click', () => {
         // STEP 2B: show OTP section. No auth execution here.
@@ -3955,72 +4180,142 @@ function playAlarmAudio(url) {
         setOtpStatus('Enter phone number and OTP.');
       });
 
-      let phoneConfirmation = null;
-      const sendOtpBtn = document.getElementById('authSendOtpBtn');
-      const verifyOtpBtn = document.getElementById('authVerifyOtpBtn');
+      // Phone OTP auth (Firebase COMPAT phone auth only)
+      const sendOtpBtn = document.getElementById('sendOtpBtn');
+      const verifyOtpBtn = document.getElementById('verifyOtpBtn');
+      const phoneNumberInput = document.getElementById('phoneNumberInput');
+      const otpCodeInput = document.getElementById('otpCodeInput');
+
+      const sanitizePhone = (s) => (s || '').toString().trim();
+      const sanitizeOtp = (s) => (s || '').toString().replace(/\D/g, '');
+
+      // Initialize RecaptchaVerifier only once per app lifetime.
+      let recaptchaVerifier = null;
+      let confirmationResult = null;
+
+      function getOrInitRecaptchaVerifier() {
+        if (recaptchaVerifier) return recaptchaVerifier;
+
+        const auth = getFirebaseAuthCompat();
+        if (!auth || !window.firebase?.auth) return null;
+
+        const host = document.getElementById('recaptcha-container');
+        if (!host) return null;
+
+        // Invisible reCAPTCHA for phone auth.
+        recaptchaVerifier = new window.firebase.auth.RecaptchaVerifier('recaptcha-container', {
+          size: 'invisible',
+        });
+
+        return recaptchaVerifier;
+      }
 
       sendOtpBtn?.addEventListener('click', async () => {
-        // STEP 2B: Firebase Phone Auth only (no Firestore).
-        setOtpStatus('Sending OTP...');
         try {
-          if (typeof getAuth !== 'function') {
-            setOtpStatus('Firebase Auth SDK not available.');
+          const auth = getFirebaseAuthCompat();
+          if (!auth) {
+            setOtpStatus('Auth not available.');
             return;
           }
-          const phoneInput = document.getElementById('authPhoneInput');
-          const phone = phoneInput && phoneInput.value ? String(phoneInput.value).trim() : '';
-          if (!phone) {
-            setOtpStatus('Enter a valid phone number.');
+
+          const phoneRaw = sanitizePhone(phoneNumberInput?.value);
+          if (!phoneRaw) {
+            setOtpStatus('Enter a phone number to send OTP.');
+            phoneNumberInput?.focus();
             return;
           }
-          const auth = getAuth();
-          const appVerifier = window.recaptchaVerifier || null;
-          // Without a real recaptcha verifier setup, this will fail gracefully.
+
+          // Basic sanity; Firebase expects E.164, but we don't implement a full formatter here.
+          // Keep it permissive: allow digits and +.
+          const phoneNormalized = phoneRaw.replace(/\s+/g, '');
+          if (!/^\+?[0-9]{6,15}$/.test(phoneNormalized)) {
+            setOtpStatus('Phone number format looks invalid. Use E.164 like +14155551234.');
+            phoneNumberInput?.focus();
+            return;
+          }
+
+          // Prepare verifier + send OTP
+          setOtpStatus('Sending OTP...');
+          sendOtpBtn.disabled = true;
+          verifyOtpBtn && (verifyOtpBtn.disabled = true);
+
+          const appVerifier = getOrInitRecaptchaVerifier();
           if (!appVerifier) {
-            setOtpStatus('OTP needs reCAPTCHA verifier (not configured in this build).');
+            setOtpStatus('Could not initialize reCAPTCHA.');
             return;
           }
-          // Lazy load recaptcha appVerifier must be provided separately.
-          phoneConfirmation = await signInWithPhoneNumber(auth, phone, appVerifier);
-          setOtpStatus('OTP sent. Enter code to verify.');
+
+          confirmationResult = await auth.signInWithPhoneNumber(phoneNormalized, appVerifier);
+
+          setOtpStatus('OTP sent. Enter the 6-digit code to verify.');
+          otpCodeInput?.focus();
+          verifyOtpBtn && (verifyOtpBtn.disabled = false);
         } catch (e) {
-          setOtpStatus(`Send OTP failed: ${e && e.message ? e.message : String(e)}`);
+          const msg = e && e.message ? e.message : String(e);
+          setOtpStatus(`OTP send failed: ${msg}`);
+        } finally {
+          sendOtpBtn.disabled = false;
         }
       });
 
       verifyOtpBtn?.addEventListener('click', async () => {
-        setOtpStatus('Verifying OTP...');
         try {
-          if (typeof getAuth !== 'function') {
-            setOtpStatus('Firebase Auth SDK not available.');
+          const auth = getFirebaseAuthCompat();
+          if (!auth) {
+            setOtpStatus('Auth not available.');
             return;
           }
-          if (!phoneConfirmation) {
+
+          const otp = sanitizeOtp(otpCodeInput?.value);
+          if (!otp) {
+            setOtpStatus('Enter the OTP code to verify.');
+            otpCodeInput?.focus();
+            return;
+          }
+          if (!/^\d{6}$/.test(otp)) {
+            setOtpStatus('OTP must be exactly 6 digits.');
+            otpCodeInput?.focus();
+            return;
+          }
+          if (!confirmationResult) {
             setOtpStatus('Send OTP first.');
             return;
           }
-          const otpInput = document.getElementById('authOtpInput');
-          const code = otpInput && otpInput.value ? String(otpInput.value).trim() : '';
-          if (!code) {
-            setOtpStatus('Enter OTP code.');
+
+          setOtpStatus('Verifying OTP...');
+          verifyOtpBtn.disabled = true;
+
+          const credResult = await confirmationResult.confirm(otp);
+          const user = credResult && credResult.user ? credResult.user : auth.currentUser;
+
+          if (!user || !user.uid) {
+            setOtpStatus('Phone login failed.');
+            verifyOtpBtn.disabled = false;
             return;
           }
-          const result = await phoneConfirmation.confirm(code);
-          const user = result && result.user ? result.user : null;
-          if (user && user.uid) {
-            try {
-              localStorage.setItem('habitTracker.auth.uid', user.uid);
-            } catch {}
-            setOtpStatus('Verified. Signed in.');
-            setStatus('Signed in.');
-            closeOverlay();
-          } else {
-            setOtpStatus('Verified.');
-          }
+
+          // Persist approved keys only.
+          try {
+            localStorage.setItem('habitTracker.auth.decided', 'true');
+            localStorage.setItem('habitTracker.auth.mode', 'phone');
+            localStorage.setItem('habitTracker.auth.uid', user.uid);
+            localStorage.setItem('habitTracker.auth.displayName', 'Phone User');
+            localStorage.setItem('habitTracker.auth.email', user.phoneNumber || '');
+          } catch {}
+
+          // Update UI
+          setOtpStatus('Phone verified.');
+          setStatus('Signed in.');
+          closeOverlay();
+          renderAccountAuthUi();
         } catch (e) {
-          setOtpStatus(`Verify failed: ${e && e.message ? e.message : String(e)}`);
+          const msg = e && e.message ? e.message : String(e);
+          setOtpStatus(`OTP verification failed: ${msg}`);
+          verifyOtpBtn.disabled = false;
         }
       });
+
+
 
       guestBtn?.addEventListener('click', () => {
         // Guest continue: closes overlay only.
@@ -4218,70 +4513,10 @@ function playAlarmAudio(url) {
       }
 
       async function restoreFromCloudOnce(els) {
-        // No listeners here; only called by button click.
-        try {
-          const uid = getCloudUid();
-          if (!uid) {
-            setStatus('Not signed in.');
-            return;
-          }
-
-          if (typeof getFirestore !== 'function' || typeof doc !== 'function' || typeof getDoc !== 'function') {
-            setStatus('Firestore not available.');
-            return;
-          }
-
-          const db = getFirestore();
-          if (!db) {
-            setStatus('Firestore not available.');
-            return;
-          }
-
-          const docRef = doc(db, 'users', uid, 'snapshot', 'latest');
-          const snap = await getDoc(docRef);
-
-          if (!snap || typeof snap.exists !== 'function' || !snap.exists()) {
-            setStatus('No cloud snapshot found.');
-            return;
-          }
-
-          const data = typeof snap.data === 'function' ? snap.data() : null;
-          const validated = validateAndCoerceSnapshot(data);
-          if (!validated) {
-            setStatus('Cloud snapshot invalid or incompatible.');
-            return;
-          }
-
-          const ok = mergeSnapshotIntoLocalState(validated);
-          if (!ok) {
-            setStatus('Restore aborted.');
-            return;
-          }
-
-          // Close confirm modal and refresh UI for current view.
-          hideRestoreConfirm(els);
-          setStatus('Restore complete.');
-
-          // Refresh the current UI.
-          if (els.currentView === 'dashboard') {
-            renderDashboard(els);
-            renderXpUi(els);
-          } else if (els.currentView === 'weekly') {
-            renderWeekly(els);
-          } else if (els.currentView === 'monthly') {
-            renderMonthly(els);
-          } else {
-            renderDashboard(els);
-          }
-
-          // Persist merged state.
-          // Important: calling save() here uses existing persistence flow; it does not enqueue queue uploads.
-          save();
-        } catch (e) {
-          try {
-            setStatus(`Restore failed: ${e && e.message ? e.message : String(e)}`);
-          } catch {}
-        }
+        // Cloud restore is disabled in this build to enforce Firebase COMPAT ONLY.
+        // Do not call modular APIs (getFirestore/doc/getDoc/setDoc/etc.).
+        hideRestoreConfirm(els);
+        setStatus('Cloud restore unavailable in this build.');
       }
 
       // Connect existing restore confirmation button.
@@ -4306,7 +4541,6 @@ function playAlarmAudio(url) {
           });
 
           restoreConfirmRestoreBtn.addEventListener('click', () => {
-            // Important: only one Firestore read.
             restoreFromCloudOnce({
               restoreConfirmModal: restoreConfirmModalEl,
               currentView: els.currentView,
@@ -4489,100 +4723,16 @@ function playAlarmAudio(url) {
             return;
           }
 
-          if (typeof getFirestore !== 'function' || typeof doc !== 'function' || typeof setDoc !== 'function') {
-            return;
-          }
+          // Firebase cloud sync is disabled in this build to enforce Firebase COMPAT ONLY.
+          // Do not call modular SDK functions (getFirestore/doc/setDoc/etc.).
+          setStatus('Cloud sync unavailable in this build.');
+          return;
 
-          const db = getFirestore();
-          if (!db) return;
 
-          // Batch upload: only upload the latest snapshot (index 0). This preserves the existing
-          // Firestore document structure (users/{uid}/snapshot/latest) while minimizing writes.
-          // Sequential FIFO requirement is preserved by removing only successfully uploaded items:
-          // if the latest succeeds, we remove all processed items because they would be superseded anyway.
-          const latestIndex = 0;
-          const latestItem = q[latestIndex];
-          if (!latestItem || !latestItem.state) {
-            // If latest payload is invalid, remove it and retry on next schedule.
-            const cleaned = q.slice(1);
-            writeQueue(cleaned);
-            return;
-          }
-
-          // Retry logic: keep queue intact and reschedule on failure.
-          const retryCount = typeof latestItem.retryCount === 'number' ? latestItem.retryCount : 0;
-          if (retryCount >= CLOUD_QUEUE_RETRY_MAX) {
-            // Prevent infinite loops: drop the latest bad payload only.
-            const cleaned = q.slice(1);
-            writeQueue(cleaned);
-            // If more items remain, schedule another attempt.
-            if (cleaned.length) setQueueTriggerEnabled(true);
-            return;
-          }
-
-          // Validate snapshot completeness minimally
-          const snap = latestItem.state;
-          const safeHabits = Array.isArray(snap.habits) ? snap.habits : [];
-          const safeMeta = snap.meta && typeof snap.meta === 'object' ? snap.meta : {};
-          const safeXp = snap.xp && typeof snap.xp === 'object' ? snap.xp : { total: 0, ledger: {} };
-          const safeStreak = snap.streak && typeof snap.streak === 'object' ? snap.streak : { current: 0, best: 0 };
-          const safeAchievements =
-            snap.achievements && typeof snap.achievements === 'object' ? snap.achievements : { unlocked: {} };
-
-          const snapshotDoc = {
-            v: 1,
-            savedAtMs: Date.now(),
-            updatedFromQueueAtMs: latestItem.queuedAtMs,
-            reason: latestItem.reason || reason,
-            snapshot: {
-              habits: safeHabits,
-              meta: safeMeta,
-              xp: safeXp,
-              streak: safeStreak,
-              achievements: safeAchievements,
-            },
-          };
-
-          // Keep existing Firestore write path unchanged.
-          const docRef = doc(db, 'users', uid, 'snapshot', 'latest');
-
-          try {
-            await setDoc(docRef, snapshotDoc, { merge: false });
-          } catch {
-            // Partial failure: leave the queue intact.
-            // Increment retry counter on the latest item only (crash-safe).
-            try {
-              const q2 = readQueue();
-              if (Array.isArray(q2) && q2.length && q2[0] && q2[0].state) {
-                q2[0] = { ...q2[0], retryCount: retryCount + 1, lastAttemptAtMs: Date.now() };
-                writeQueue(q2);
-              }
-            } catch {}
-
-            // Exponential backoff retry scheduling.
-            const nextRetryCount = retryCount + 1;
-            const delayMs = Math.min(
-              CLOUD_QUEUE_RETRY_MAX_MS,
-              Math.round(CLOUD_QUEUE_RETRY_BASE_MS * Math.pow(2, nextRetryCount))
-            );
-
-            // Ensure queue trigger remains enabled so a later schedule can run.
-            setQueueTriggerEnabled(true);
-
-            if (!cloudProcessTimerHandle && shouldProcessQueueNow()) {
-              cloudProcessTimerHandle = setTimeout(() => {
-                cloudProcessTimerHandle = null;
-                processQueue('retry').catch(() => {});
-              }, delayMs);
-            }
-
-            return;
-          }
-
-          // Success: remove all queued items since we've uploaded the latest snapshot.
-          // This prevents stale accumulation and redundant writes.
-          writeQueue([]);
-          setQueueTriggerEnabled(false);
+          // Firebase cloud sync is disabled in this build to enforce Firebase COMPAT ONLY.
+          // Modular SDK calls removed. Keep queue mechanism in place (local-only enqueue).
+          // No-op to preserve offline stability.
+          return;
         } finally {
           cloudProcessInFlight = false;
         }
@@ -4630,7 +4780,45 @@ function playAlarmAudio(url) {
   }
 
 
+  // Global auth helpers (required by external UI/debug buttons).
+  // They must be available regardless of whether this file's internal overlay wiring has run.
+  window.showHabitLogin = function showHabitLogin() {
+    console.log('[auth helpers] loaded', typeof window.showHabitLogin, typeof window.logoutHabitTracker);
+    try {
+      localStorage.removeItem('habitTracker.auth.decided');
+      localStorage.removeItem('habitTracker.auth.mode');
+      localStorage.removeItem('habitTracker.auth.uid');
+    } catch {}
+
+    const overlay = document.querySelector('#authOverlay, .auth-overlay, [data-auth-overlay]');
+    if (overlay) {
+      overlay.hidden = false;
+      overlay.style.display = '';
+      overlay.classList.add('is-open');
+      overlay.setAttribute('aria-hidden', 'false');
+    }
+
+    try {
+      console.log('[auth] login overlay requested');
+    } catch {}
+  };
+
+  window.logoutHabitTracker = async function logoutHabitTracker() {
+    try {
+      if (window.auth && window.auth.currentUser) {
+        await window.auth.signOut();
+      }
+    } catch (err) {
+      try {
+        console.warn('[auth] logout failed', err);
+      } catch {}
+    }
+
+    window.showHabitLogin();
+  };
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
 })();
+
 

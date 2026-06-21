@@ -85,7 +85,7 @@
               <div class="auth-field">
                 <div class="auth-field-label">Mobile number</div>
                 <input
-                  id="authPhoneInput"
+                  id="phoneNumberInput"
                   type="tel"
                   inputmode="tel"
                   autocomplete="tel"
@@ -94,18 +94,21 @@
               </div>
 
               <div class="auth-otp-actions">
-                <button class="glow-btn" type="button" id="authSendOtpBtn">
+                <button class="glow-btn" type="button" id="sendOtpBtn">
                   Send OTP
                 </button>
-                <button class="ghost-btn" type="button" id="authVerifyOtpBtn">
+                <button class="ghost-btn" type="button" id="verifyOtpBtn" disabled>
                   Verify OTP
                 </button>
               </div>
 
+              <!-- reCAPTCHA (invisible) host for Firebase phone auth -->
+              <div id="recaptcha-container" aria-hidden="true"></div>
+
               <div class="auth-field" style="margin-top: 10px">
                 <div class="auth-field-label">OTP</div>
                 <input
-                  id="authOtpInput"
+                  id="otpCodeInput"
                   type="text"
                   inputmode="numeric"
                   autocomplete="one-time-code"
@@ -116,7 +119,7 @@
 
               <div
                 class="auth-status"
-                id="authOtpStatus"
+                id="phoneOtpStatus"
                 aria-live="polite"
               ></div>
             </div>
@@ -601,6 +604,39 @@
 
               <div class="settings-row">
                 <div>
+                  <div class="setting-label">Account</div>
+                  <div class="setting-sub">
+                    Sign in to manage your account and enable premium sync.
+                  </div>
+                </div>
+              </div>
+
+              <div id="accountSection" class="account-section">
+                <div class="account-row">
+                  <div class="account-label">Name</div>
+                  <div class="account-value" id="accountUserName">—</div>
+                </div>
+                <div class="account-row">
+                  <div class="account-label">Email</div>
+                  <div class="account-value" id="accountUserEmail">—</div>
+                </div>
+
+                <div class="account-actions">
+                  <button class="glow-btn" id="accountSignInBtn" type="button">
+                    Google Sign In
+                  </button>
+                  <button class="ghost-btn" id="accountLogoutBtn" type="button">
+                    Logout
+                  </button>
+                </div>
+
+                <div class="account-hint" id="accountGuestHint">
+                  Guest mode: you can use the app offline without signing out.
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div>
                   <div class="setting-label">Reset all data</div>
                   <div class="setting-sub">
                     Removes habits and history stored in this browser.
@@ -610,6 +646,7 @@
                   Delete all
                 </button>
               </div>
+
             </div>
           </div>
         </section>
@@ -1060,6 +1097,7 @@
     </div>
 
     <footer
+
       class="privacy-link"
       style="
         text-align: center;
@@ -1073,7 +1111,11 @@
       >
     </footer>
 
-    <script type="module" src="script.js"></script>
+    <script src="./firebaseConfig.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="script.js"></script>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
