@@ -1,5 +1,7 @@
-- [ ] Update service-worker.js: versioned cache, precache required app-shell assets, add fetch handler (navigation->cached index_fixed.html fallback, assets->cache-first), exclude Firebase/external requests
-- [ ] Update manifest.json: ensure start_url/scope for offline navigation
-- [ ] Verify alarm/reminder code unchanged (no edits to script.js)
-- [ ] Manual test steps: open online once, go offline, reopen app, confirm dashboard + habits work offline
+# TODO (HabitTracker)
+
+- [ ] Backup current `index.html` as `index_old.html`.
+- [ ] Replace `index.html` with exact contents of `index_fixed.html`.
+- [ ] Verify `index.html` contains the auth overlay + account section + Google Sign In + Logout button.
+- [ ] Optionally keep `index_fixed.html` as backup (not required by user unless confirmed).
 

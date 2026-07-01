@@ -16,6 +16,190 @@
   </head>
   <body>
     <div class="app">
+      <!-- Auth Overlay (Phase 1: UI-only, hidden by default) -->
+      <section class="auth-overlay" id="authOverlay" aria-hidden="true">
+        <div
+          class="auth-overlay-backdrop"
+          id="authOverlayBackdrop"
+          tabindex="-1"
+          aria-hidden="true"
+        ></div>
+        <div
+          class="auth-overlay-card"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="authOverlayTitle"
+        >
+          <div class="auth-overlay-head">
+            <div>
+              <div class="auth-overlay-kicker">Premium Sync</div>
+              <div class="auth-overlay-title" id="authOverlayTitle">
+                Welcome back
+              </div>
+              <div class="auth-overlay-sub">
+                Your data stays local until you enable cloud backup.
+              </div>
+            </div>
+            <button
+              class="icon-btn"
+              type="button"
+              id="authOverlayCloseBtn"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div class="auth-overlay-body">
+            <div class="auth-actions">
+              <button
+                class="glow-btn auth-btn"
+                type="button"
+                id="authGoogleBtn"
+              >
+                Continue with Google
+              </button>
+              <button
+                class="ghost-btn auth-btn"
+                type="button"
+                id="authGuestBtn"
+              >
+                Continue as Guest
+              </button>
+              <button
+                class="ghost-btn auth-btn"
+                type="button"
+                id="authPhoneBtn"
+              >
+                Continue with Mobile Number
+              </button>
+            </div>
+
+
+            <!-- STEP 2A (UI ONLY): Phone OTP scaffolding — no logic yet -->
+            <div
+              class="auth-otp"
+              id="authOtpSection"
+              aria-hidden="true"
+              style="display: none"
+            >
+              <div class="auth-field">
+                <div class="auth-field-label">Mobile number</div>
+                <input
+                  id="phoneNumberInput"
+                  type="tel"
+                  inputmode="tel"
+                  autocomplete="tel"
+                  placeholder="e.g., +1 555 123 4567"
+                />
+              </div>
+
+              <div class="auth-otp-actions">
+                <button class="glow-btn" type="button" id="sendOtpBtn">
+                  Send OTP
+                </button>
+                <button class="ghost-btn" type="button" id="verifyOtpBtn" disabled>
+                  Verify OTP
+                </button>
+              </div>
+
+              <!-- reCAPTCHA (invisible) host for Firebase phone auth -->
+              <div id="recaptcha-container" aria-hidden="true"></div>
+
+              <div class="auth-field" style="margin-top: 10px">
+                <div class="auth-field-label">OTP</div>
+                <input
+                  id="otpCodeInput"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  placeholder="Enter 6-digit code"
+                  maxlength="6"
+                />
+              </div>
+
+              <div
+                class="auth-status"
+                id="phoneOtpStatus"
+                aria-live="polite"
+              ></div>
+            </div>
+
+            <div class="auth-divider"></div>
+
+            <div class="auth-optin">
+              <div class="auth-optin-title">Cloud backup is off</div>
+              <div class="auth-optin-sub">
+                Enable cloud backup to start syncing with your account.
+              </div>
+              <button class="glow-btn" type="button" id="authEnableCloudBtn">
+                Enable cloud backup
+              </button>
+              <div
+                style="margin-top: 12px; display: none"
+                id="authRestoreFromCloudWrap"
+              >
+                <button
+                  class="ghost-btn"
+                  type="button"
+                  id="authRestoreFromCloudBtn"
+                >
+                  Restore from Cloud
+                </button>
+              </div>
+            </div>
+
+            <div class="auth-status" id="authStatus" aria-live="polite"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Restore confirmation modal (UI placeholder only; no Firestore restore yet) -->
+      <section
+        class="modal"
+        id="restoreConfirmModal"
+        aria-hidden="true"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div class="modal-card">
+          <div class="modal-head">
+            <div>
+              <div class="modal-title">Restore from Cloud?</div>
+              <div class="modal-sub">
+                This will merge cloud data with your local habits.
+              </div>
+            </div>
+            <button
+              class="icon-btn"
+              type="button"
+              id="restoreConfirmCloseBtn"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+          <div class="modal-actions">
+            <button
+              class="ghost-btn"
+              type="button"
+              id="restoreConfirmCancelBtn"
+            >
+              Cancel
+            </button>
+            <button
+              class="glow-btn"
+              type="button"
+              id="restoreConfirmRestoreBtn"
+            >
+              Restore
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- (intentionally left blank placeholder sidebar removed) -->
+
       <aside class="sidebar" aria-label="Sidebar">
         <div class="side-top">
           <div class="brand">
@@ -82,6 +266,35 @@
               <div class="streak-label">streak</div>
             </div>
 
+            <div
+              class="auth-badge"
+              id="authStateBadge"
+              aria-live="polite"
+              style="display: none; align-items: center; gap: 8px"
+            >
+              <span
+                class="auth-badge-dot"
+                aria-hidden="true"
+                style="
+                  width: 10px;
+                  height: 10px;
+                  border-radius: 999px;
+                  background: rgba(124, 92, 255, 0.95);
+                  display: inline-block;
+                "
+              ></span>
+              <span
+                class="auth-badge-text"
+                id="authStateBadgeText"
+                style="
+                  font-weight: 900;
+                  font-size: 12px;
+                  color: rgba(232, 238, 252, 0.9);
+                "
+                >Guest</span
+              >
+            </div>
+
             <button class="glow-btn" id="newHabitBtn" type="button">
               + Add habit
             </button>
@@ -140,6 +353,9 @@
               <div class="card-title">Habit checklist</div>
               <div class="card-sub">Tap ✓/✗ for today. Use 🗑 to delete.</div>
               <div class="habit-list" id="habitList" aria-live="polite"></div>
+
+              <!-- Alarm/reminder mobile popover (injected by script.js if needed) -->
+              <div id="reminderPopoverHost" style="display: none"></div>
 
               <div class="empty" id="emptyState">
                 <div class="empty-ic">✦</div>
@@ -251,6 +467,12 @@
                     <div class="metric-value" id="analyticsMissedHabits">0</div>
                   </div>
                   <div class="metric">
+                    <div class="metric-label">Not completed</div>
+                    <div class="metric-value" id="analyticsNotCompletedHabits">
+                      0
+                    </div>
+                  </div>
+                  <div class="metric">
                     <div class="metric-label">Best habit</div>
                     <div
                       class="metric-value metric-value--soft"
@@ -259,6 +481,7 @@
                       —
                     </div>
                   </div>
+
                   <div class="metric">
                     <div class="metric-label">Completion percentage</div>
                     <div class="metric-value" id="analyticsCompletionPct">
@@ -382,6 +605,39 @@
 
               <div class="settings-row">
                 <div>
+                  <div class="setting-label">Account</div>
+                  <div class="setting-sub">
+                    Sign in to manage your account and enable premium sync.
+                  </div>
+                </div>
+              </div>
+
+              <div id="accountSection" class="account-section">
+                <div class="account-row">
+                  <div class="account-label">Name</div>
+                  <div class="account-value" id="accountUserName">—</div>
+                </div>
+                <div class="account-row">
+                  <div class="account-label">Email</div>
+                  <div class="account-value" id="accountUserEmail">—</div>
+                </div>
+
+                <div class="account-actions">
+                  <button class="glow-btn" id="accountSignInBtn" type="button">
+                    Google Sign In
+                  </button>
+                  <button class="ghost-btn" id="accountLogoutBtn" type="button">
+                    Logout
+                  </button>
+                </div>
+
+                <div class="account-hint" id="accountGuestHint">
+                  Guest mode: you can use the app offline without signing out.
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div>
                   <div class="setting-label">Reset all data</div>
                   <div class="setting-sub">
                     Removes habits and history stored in this browser.
@@ -391,6 +647,7 @@
                   Delete all
                 </button>
               </div>
+
             </div>
           </div>
         </section>
@@ -841,7 +1098,7 @@
     </div>
 
     <footer
-      
+
       class="privacy-link"
       style="
         text-align: center;
