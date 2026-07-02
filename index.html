@@ -1115,28 +1115,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-    <script>
-      (function () {
-        try {
-          if (
-            window.firebase &&
-            window.firebaseConfig &&
-            (!firebase.apps || firebase.apps.length === 0)
-          ) {
-            firebase.initializeApp(window.firebaseConfig);
-          }
-          window.auth = firebase.auth();
-          window.db = firebase.firestore ? firebase.firestore() : null;
-          window.FIREBASE_READY = true;
-          console.log("[html-firebase-init] ready", firebase.apps.length);
-        } catch (err) {
-          window.FIREBASE_READY = false;
-          console.error("[html-firebase-init] failed", err);
-        }
-      })();
-    </script>
     <script src="script.js"></script>
     <script>
+      // Keep in sync with index_fixed.html: compat init + app boot happen in script.js.
+      // Service worker registration remains optional/non-fatal.
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
           navigator.serviceWorker
@@ -1150,3 +1132,4 @@
     </script>
   </body>
 </html>
+

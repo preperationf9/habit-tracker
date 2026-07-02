@@ -1777,14 +1777,6 @@
 
   function renderAccountAuthUi() {
     try {
-      const uid = (() => {
-        try {
-          return localStorage.getItem('habitTracker.auth.uid');
-        } catch {
-          return null;
-        }
-      })();
-
       const displayName = (() => {
         try {
           return localStorage.getItem('habitTracker.auth.displayName');
@@ -1804,34 +1796,29 @@
       const accountSection = document.getElementById('accountSection');
       const nameEl = document.getElementById('accountUserName');
       const emailEl = document.getElementById('accountUserEmail');
-      const signInBtn = document.getElementById('accountSignInBtn');
-      const logoutBtn = document.getElementById('accountLogoutBtn');
 
-      if (!accountSection || !nameEl || !emailEl || !signInBtn || !logoutBtn) return;
+      if (!accountSection || !nameEl || !emailEl) return;
 
-      const isGuest = !uid;
-
+      // NOTE: Do NOT touch sign-in/sign-out/Google button enable/disable or display.
+      // Auth controller is the only source of truth for those.
       nameEl.textContent = displayName || '—';
       emailEl.textContent = email || '—';
 
-      // Guest mode: show Sign In, hide Logout
-      // Google logged-in: show Name/Email, hide Sign In, show Logout
-      // Requirement: logout button UI-only. Click does nothing (no overlay, no signOut).
-      if (isGuest) {
-        signInBtn.style.display = '';
-        logoutBtn.style.display = 'none';
-        document.getElementById('accountGuestHint')?.classList.remove('is-hidden');
-      } else {
-        signInBtn.style.display = 'none';
-        logoutBtn.style.display = '';
-        document.getElementById('accountGuestHint')?.classList.add('is-hidden');
+      // Keep guest hint as non-button UI only.
+      const guestHintEl = document.getElementById('accountGuestHint');
+      if (guestHintEl) {
+        const uid = (() => {
+          try {
+            return localStorage.getItem('habitTracker.auth.uid');
+          } catch {
+            return null;
+          }
+        })();
+        guestHintEl.classList.toggle('is-hidden', !!uid);
       }
-
-      // Auth button click handlers are controlled by the single global capturing handler.
-      // (See auth-final document click handler near the end of this file.)
-
     } catch {}
   }
+
 
   // =============================
   // Trash
@@ -3900,24 +3887,26 @@ function playAlarmAudio(url) {
     load();
     ensureStateShape();
 
-    // STEP 2C (UI ONLY): Auth state badge (Guest remains default; no habit/cloud logic)
-    try {
-      const badge = document.getElementById('authStateBadge');
-      const badgeText = document.getElementById('authStateBadgeText');
-      if (badge) {
-        const uid = localStorage.getItem('habitTracker.auth.uid');
-        badge.style.display = 'flex';
-        if (uid) {
-          badgeText && (badgeText.textContent = 'Signed in');
-          const dot = badge.querySelector('.auth-badge-dot');
-          if (dot) dot.style.background = 'rgba(34,197,94,.95)';
-        } else {
-          badgeText && (badgeText.textContent = 'Guest');
-          const dot = badge.querySelector('.auth-badge-dot');
-          if (dot) dot.style.background = 'rgba(124,92,255,.95)';
+      // STEP 2C (UI ONLY): Auth state badge (Guest remains default; no habit/cloud logic)
+
+      try {
+        const badge = document.getElementById('authStateBadge');
+        const badgeText = document.getElementById('authStateBadgeText');
+        if (badge) {
+          const uid = localStorage.getItem('habitTracker.auth.uid');
+          badge.style.display = 'flex';
+          if (uid) {
+            badgeText && (badgeText.textContent = 'Signed in');
+            const dot = badge.querySelector('.auth-badge-dot');
+            if (dot) dot.style.background = 'rgba(34,197,94,.95)';
+          } else {
+            badgeText && (badgeText.textContent = 'Guest');
+            const dot = badge.querySelector('.auth-badge-dot');
+            if (dot) dot.style.background = 'rgba(124,92,255,.95)';
+          }
         }
-      }
-    } catch {}
+      } catch {}
+
 
     // Default the reminder picker visibility on load/open.
     syncReminderTypeUi(els);
@@ -4672,76 +4661,180 @@ function playAlarmAudio(url) {
 })();
 
 // ==============================
-// FINAL: Google Sign In / Logout click handling
-// Must be LAST in file and outside the main IIFE.
+// Minimal compat-only Google auth controller
+// (UI-only; no habit/alarm/analytics/localStorage/save mutations)
 // ==============================
-;(() => {
-  console.log("[final-auth] block loaded");
+(function initFinalAuthController() {
+  'use strict';
 
-  document.addEventListener("click", async function (e) {
-    const t = e.target;
-    console.log('[auth-debug] click event target:', t && (t.id || t.tagName));
-    const signInBtn = t && t.closest ? t.closest("#accountSignInBtn, #authGoogleBtn") : null;
-    const logoutBtn = t && t.closest ? t.closest("#accountLogoutBtn") : null; 
-    console.log('[auth-debug] matched buttons:', { signIn: !!signInBtn, logout: !!logoutBtn });
+  // Required global locks
+  window.__GOOGLE_SIGNIN_IN_PROGRESS__ = window.__GOOGLE_SIGNIN_IN_PROGRESS__ || false;
+  window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = window.__GOOGLE_SIGNOUT_IN_PROGRESS__ || false;
 
-    if (!signInBtn && !logoutBtn) return;
+  // Avoid duplicate binding
+  if (window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__) return;
+  window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__ = true;
 
-    console.log("[signin clicked]");
-    if (logoutBtn) console.log("[logout clicked]");
-    console.log("[final-auth] click captured", {
-      signIn: !!signInBtn,
-      logout: !!logoutBtn,
-      id: e.target && e.target.id,
+  const signInBtn = () => document.getElementById('accountSignInBtn') || null;
+  const logoutBtn = () => document.getElementById('accountLogoutBtn') || null;
+  const overlayGoogleBtn = () => document.getElementById('authGoogleBtn') || null;
+
+
+  function renderAuthUi(user, mode) {
+    const sBtn = signInBtn();
+    const lBtn = logoutBtn();
+    const oBtn = overlayGoogleBtn();
+
+
+    // Strict mode mapping: never show Sign-In + Logout together.
+    const m = mode;
+
+    const setSignIn = (visible, disabled, text) => {
+      if (!sBtn) return;
+      sBtn.style.display = visible ? '' : 'none';
+      sBtn.disabled = !!disabled;
+      if (visible && text) sBtn.textContent = text;
+    };
+
+    const setOverlaySignIn = (visible, disabled, text) => {
+      if (!oBtn) return;
+      oBtn.style.display = visible ? '' : 'none';
+      oBtn.disabled = !!disabled;
+      if (visible && text) oBtn.textContent = text;
+    };
+
+    const setLogout = (visible, disabled, text) => {
+      if (!lBtn) return;
+      lBtn.style.display = visible ? '' : 'none';
+      lBtn.disabled = !!disabled;
+      if (visible && text) lBtn.textContent = text;
+    };
+
+    if (m === 'signedOut') {
+      setSignIn(true, false, 'Google Sign In');
+      setOverlaySignIn(true, false, 'Continue with Google');
+      setLogout(false, true, 'Logout');
+      return;
+    }
+
+    if (m === 'signedIn') {
+      setSignIn(false, true, 'Google Sign In');
+      setOverlaySignIn(false, true, 'Continue with Google');
+      setLogout(true, false, 'Logout');
+      return;
+    }
+
+    if (m === 'signingIn') {
+      setSignIn(true, true, 'Signing in...');
+      setOverlaySignIn(true, true, 'Signing in...');
+      setLogout(false, true, 'Signing in...');
+      return;
+    }
+
+    if (m === 'signingOut') {
+      setSignIn(false, true, 'Google Sign In');
+      setOverlaySignIn(false, true, 'Continue with Google');
+      setLogout(true, true, 'Signing out...');
+      return;
+    }
+
+    // Fallback: default to signedOut if unknown.
+    setSignIn(true, false, 'Google Sign In');
+    setOverlaySignIn(true, false, 'Continue with Google');
+    setLogout(false, true, 'Logout');
+  }
+
+  // Initial render
+  renderAuthUi(null, 'signedOut');
+
+
+  function getFbAuth() {
+    if (window.FIREBASE_READY !== true) return null;
+    if (!window.auth) return null;
+    return window.auth;
+  }
+
+  // ONE document-level capturing click handler
+  document.addEventListener(
+    'click',
+    async function (e) {
+      const t = e.target;
+      const matchedSignIn = t && t.closest ? t.closest('#accountSignInBtn, #authGoogleBtn') : null;
+      const matchedLogout = t && t.closest ? t.closest('#accountLogoutBtn') : null;
+      if (!matchedSignIn && !matchedLogout) return;
+
+      // Required strict preventDefault/stopPropagation/stopImmediatePropagation
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      const fbAuth = getFbAuth();
+      if (!fbAuth) return;
+
+      if (matchedSignIn) {
+        if (window.__GOOGLE_SIGNIN_IN_PROGRESS__ === true) return;
+        window.__GOOGLE_SIGNIN_IN_PROGRESS__ = true;
+        renderAuthUi({ state: 'signing_in' });
+
+        try {
+          const provider = new window.firebase.auth.GoogleAuthProvider();
+          await fbAuth.signInWithPopup(provider); // exactly once
+        } finally {
+          window.__GOOGLE_SIGNIN_IN_PROGRESS__ = false;
+        }
+        return;
+      }
+
+      if (matchedLogout) {
+        if (window.__GOOGLE_SIGNOUT_IN_PROGRESS__ === true) return;
+        window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = true;
+        renderAuthUi({ state: 'signing_out' });
+
+        try {
+          await fbAuth.signOut(); // exactly once
+        } finally {
+          window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = false;
+        }
+        return;
+      }
+    },
+    true
+  );
+
+  // ONE auth state render binding
+  const bind = () => {
+    const fbAuth = getFbAuth();
+    if (!fbAuth || typeof fbAuth.onAuthStateChanged !== 'function') return false;
+
+    fbAuth.onAuthStateChanged(function (user) {
+      renderAuthUi({ state: user ? 'signed_in' : 'signed_out' });
+
+      // Optional: allow account UI refresh without controlling enable/disable/display
+      try {
+        if (typeof renderAccountAuthUi === 'function') renderAccountAuthUi();
+      } catch {}
     });
 
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
+    return true;
+  };
 
-    try {
-      if (!window.firebase || !window.firebaseConfig) {
-        alert("Firebase not loaded");
-        return;
+  // Wait briefly for compat auth init
+  if (!bind()) {
+    const start = Date.now();
+    const t = setInterval(() => {
+      if (bind()) clearInterval(t);
+      else if (Date.now() - start > 4000) {
+        clearInterval(t);
+        renderAuthUi({ state: 'signed_out' });
       }
-
-      // Firebase is initialized (compat) in the main file; avoid re-initialization here.
-      // const auth = firebase.auth();
-
-      const auth = window.auth || firebase.auth();
-
-
-      if (signInBtn) {
-        const provider = new firebase.auth.GoogleAuthProvider();
-        const result = await auth.signInWithPopup(provider);
-        const user = result.user || auth.currentUser;
-
-        if (user) {
-          localStorage.setItem("habitTracker.auth.uid", user.uid);
-          localStorage.setItem("habitTracker.auth.mode", "google");
-          localStorage.setItem("habitTracker.auth.decided", "true");
-        }
-
-        location.reload();
-        return;
-      }
-
-      if (logoutBtn) {
-        await auth.signOut();
-
-        localStorage.removeItem("habitTracker.auth.uid");
-        localStorage.setItem("habitTracker.auth.mode", "guest");
-        localStorage.setItem("habitTracker.auth.decided", "true");
-
-        location.reload();
-        return;
-      }
-    } catch (err) {
-      console.error("[final-auth] failed", err);
-      alert("Auth failed: " + (err && err.message ? err.message : err));
-    }
-  }, true);
+    }, 25);
+  }
 })();
+
+
+
+
+
 
 
 
