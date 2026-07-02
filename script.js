@@ -1,51 +1,209 @@
 
 
 
+
+
+// --- Firebase compat bootstrap (must run before any auth/alarm/cloud logic) ---
+// Uses global firebaseConfig from firebaseConfig.js and the firebasejs compat SDKs.
+(function firebaseCompatBootstrapOnce() {
+  try {
+    const fb = window.firebase;
+    const cfg = window.firebaseConfig || window.FIREBASE_CONFIG || window.firebaseCfg;
+
+    if (fb && typeof fb.initializeApp === 'function' && cfg) {
+      // Initialize exactly once
+      if (!Array.isArray(fb.apps)) fb.apps = [];
+      if (fb.apps.length === 0) fb.initializeApp(cfg);
+
+      // Expose compat globals used by the auth controller
+      window.auth = typeof fb.auth === 'function' ? fb.auth() : null;
+      window.db = typeof fb.firestore === 'function' ? fb.firestore() : null;
+
+      window.FIREBASE_READY = true;
+    } else {
+      window.FIREBASE_READY = false;
+    }
+  } catch {
+    window.FIREBASE_READY = false;
+  }
+})();
+
+// --- Final auth controller + strict render + single capturing handler ---
+(function initFinalAuthController() {
+  'use strict';
+
+  if (window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__) return;
+  window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__ = true;
+
+  window.__GOOGLE_SIGNIN_IN_PROGRESS__ = window.__GOOGLE_SIGNIN_IN_PROGRESS__ || false;
+  window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = window.__GOOGLE_SIGNOUT_IN_PROGRESS__ || false;
+
+  const elAccountSignIn = () => document.getElementById('accountSignInBtn');
+  const elAccountLogout = () => document.getElementById('accountLogoutBtn');
+  const elOverlayGoogle = () => document.getElementById('authGoogleBtn');
+
+  const setButtonVisibility = (btn, visible) => {
+    if (!btn) return;
+    btn.style.display = visible ? '' : 'none';
+  };
+
+  const setButtonState = (btn, disabled, text) => {
+    if (!btn) return;
+    btn.disabled = !!disabled;
+    if (text) btn.textContent = text;
+  };
+
+  function renderAuthUi(state) {
+    const signIn = elAccountSignIn();
+    const logout = elAccountLogout();
+    const overlayGoogle = elOverlayGoogle();
+
+    // State model:
+    // signedOut | signedIn | signingIn | signingOut
+    if (state === 'signedOut') {
+      setButtonVisibility(signIn, true);
+      setButtonState(signIn, false, 'Google Sign In');
+
+      setButtonVisibility(overlayGoogle, true);
+      setButtonState(overlayGoogle, false, 'Continue with Google');
+
+      setButtonVisibility(logout, false);
+      setButtonState(logout, true);
+      return;
+    }
+
+    if (state === 'signedIn') {
+      setButtonVisibility(signIn, false);
+      setButtonState(signIn, true);
+
+      setButtonVisibility(overlayGoogle, false);
+      setButtonState(overlayGoogle, true);
+
+      setButtonVisibility(logout, true);
+      setButtonState(logout, false, 'Logout');
+      return;
+    }
+
+    if (state === 'signingIn') {
+      setButtonVisibility(signIn, true);
+      setButtonState(signIn, true, 'Signing in...');
+
+      setButtonVisibility(overlayGoogle, true);
+      setButtonState(overlayGoogle, true, 'Signing in...');
+
+      setButtonVisibility(logout, false);
+      setButtonState(logout, true);
+      return;
+    }
+
+    if (state === 'signingOut') {
+      setButtonVisibility(signIn, false);
+      setButtonState(signIn, true);
+
+      setButtonVisibility(overlayGoogle, false);
+      setButtonState(overlayGoogle, true);
+
+      setButtonVisibility(logout, true);
+      setButtonState(logout, true, 'Signing out...');
+      return;
+    }
+
+    // default
+    renderAuthUi('signedOut');
+  }
+
+  function getFbAuth() {
+    if (window.FIREBASE_READY !== true) return null;
+    if (!window.auth) return null;
+    return window.auth;
+  }
+
+  // Initial strict render
+  renderAuthUi('signedOut');
+
+  // Single capturing click handler
+  document.addEventListener(
+    'click',
+    async (e) => {
+      const t = e.target;
+      const matchedSignIn = t && t.closest ? t.closest('#accountSignInBtn, #authGoogleBtn') : null;
+      const matchedLogout = t && t.closest ? t.closest('#accountLogoutBtn') : null;
+      if (!matchedSignIn && !matchedLogout) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+
+      const fbAuth = getFbAuth();
+      if (!fbAuth) return;
+
+      if (matchedSignIn) {
+        if (window.__GOOGLE_SIGNIN_IN_PROGRESS__) return;
+        window.__GOOGLE_SIGNIN_IN_PROGRESS__ = true;
+        renderAuthUi('signingIn');
+
+        try {
+          const provider = new window.firebase.auth.GoogleAuthProvider();
+          await fbAuth.signInWithPopup(provider);
+        } finally {
+          window.__GOOGLE_SIGNIN_IN_PROGRESS__ = false;
+        }
+        return;
+      }
+
+      if (matchedLogout) {
+        if (window.__GOOGLE_SIGNOUT_IN_PROGRESS__) return;
+        window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = true;
+        renderAuthUi('signingOut');
+
+        try {
+          await fbAuth.signOut();
+        } finally {
+          window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = false;
+        }
+      }
+    },
+    true,
+  );
+
+  // One auth-state binding
+  const bind = () => {
+    const fbAuth = getFbAuth();
+    if (!fbAuth || typeof fbAuth.onAuthStateChanged !== 'function') return false;
+
+    fbAuth.onAuthStateChanged((user) => {
+      renderAuthUi(user ? 'signedIn' : 'signedOut');
+      try {
+        if (typeof renderAccountAuthUi === 'function') renderAccountAuthUi();
+      } catch {}
+    });
+
+    return true;
+  };
+
+  if (!bind()) {
+    const start = Date.now();
+    const t = setInterval(() => {
+      if (bind()) clearInterval(t);
+      else if (Date.now() - start > 4000) {
+        clearInterval(t);
+        renderAuthUi('signedOut');
+      }
+    }, 25);
+  }
+})();
+
+
 (() => {
   'use strict';
+
 
   const STORAGE_KEY = 'habitTracker.v1';
   const STORAGE_MIGRATION_VERSION = 3;
 
   const XP = { completeHabit: 10 };
 
-  // --- Firebase compat ensure (TOP LEVEL, before app boot) ---
-  // Compat-only Firebase bootstrap. Never use modular initializeApp/getAuth/getFirestore here.
-  function ensureFirebaseCompatReady() {
-    try {
-      const fb = window.firebase;
-      const cfg = window.firebaseConfig || window.FIREBASE_CONFIG || window.firebaseCfg;
 
-      if (!fb || typeof fb.initializeApp !== 'function' || !cfg) {
-        window.FIREBASE_READY = false;
-        return false;
-      }
-
-      if (!Array.isArray(fb.apps)) fb.apps = [];
-      if (fb.apps.length === 0) fb.initializeApp(cfg);
-
-      window.auth = typeof fb.auth === 'function' ? fb.auth() : null;
-      window.db = typeof fb.firestore === 'function' ? fb.firestore() : null;
-      window.FIREBASE_READY = fb.apps.length > 0;
-
-      return window.FIREBASE_READY;
-    } catch (err) {
-      window.FIREBASE_READY = false;
-      try {
-        console.warn('[firebase compat] init failed:', err);
-      } catch {}
-      return false;
-    }
-  }
-
-  window.ensureFirebaseCompatReady = ensureFirebaseCompatReady;
-  ensureFirebaseCompatReady();
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', ensureFirebaseCompatReady, { once: true });
-  } else {
-    ensureFirebaseCompatReady();
-  }
-  window.addEventListener?.('load', ensureFirebaseCompatReady, { once: true });
 
   // Streak is calculated from persistent activity history (dates where user completed at least one habit).
 
