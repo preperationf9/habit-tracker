@@ -3,161 +3,190 @@
 
 
 
-// --- Firebase compat bootstrap (must run before any auth/alarm/cloud logic) ---
-// Uses global firebaseConfig from firebaseConfig.js and the firebasejs compat SDKs.
-(function firebaseCompatBootstrapOnce() {
-  try {
-    const fb = window.firebase;
-    const cfg = window.firebaseConfig || window.FIREBASE_CONFIG || window.firebaseCfg;
 
-    if (fb && typeof fb.initializeApp === 'function' && cfg) {
-      // Initialize exactly once
-      if (!Array.isArray(fb.apps)) fb.apps = [];
-      if (fb.apps.length === 0) fb.initializeApp(cfg);
 
-      // Expose compat globals used by the auth controller
-      window.auth = typeof fb.auth === 'function' ? fb.auth() : null;
-      window.db = typeof fb.firestore === 'function' ? fb.firestore() : null;
-
-      window.FIREBASE_READY = true;
-    } else {
-      window.FIREBASE_READY = false;
-    }
-  } catch {
-    window.FIREBASE_READY = false;
-  }
-})();
-
-// --- Final auth controller + strict render + single capturing handler ---
-(function initFinalAuthController() {
+// --- Firebase AUTH (COMPAT) — single-source architecture ---
+// NOTE: This block is the only Firebase/Auth implementation in this file.
+// Uses firebaseConfig from firebaseConfig.js and compat SDK globals.
+(function firebaseAuthCompatArchitectureOnce() {
   'use strict';
 
-  if (window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__) return;
-  window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__ = true;
+  if (window.__HABITTRACKER_FIREBASE_AUTH_ARCH_BOUND__) return;
+  window.__HABITTRACKER_FIREBASE_AUTH_ARCH_BOUND__ = true;
 
+  // Locks must exist.
   window.__GOOGLE_SIGNIN_IN_PROGRESS__ = window.__GOOGLE_SIGNIN_IN_PROGRESS__ || false;
   window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = window.__GOOGLE_SIGNOUT_IN_PROGRESS__ || false;
 
+  // Button state machine states
+  const STATES = {
+    SIGNED_OUT: 'SIGNED_OUT',
+    SIGNING_IN: 'SIGNING_IN',
+    SIGNED_IN: 'SIGNED_IN',
+    SIGNING_OUT: 'SIGNING_OUT',
+  };
+
   const elAccountSignIn = () => document.getElementById('accountSignInBtn');
   const elAccountLogout = () => document.getElementById('accountLogoutBtn');
-  const elOverlayGoogle = () => document.getElementById('authGoogleBtn');
+  const elAuthGoogle = () => document.getElementById('authGoogleBtn');
 
-  const setButtonVisibility = (btn, visible) => {
-    if (!btn) return;
-    btn.style.display = visible ? '' : 'none';
+  const setVisible = (el, visible) => {
+    if (!el) return;
+    el.style.display = visible ? '' : 'none';
   };
 
-  const setButtonState = (btn, disabled, text) => {
-    if (!btn) return;
-    btn.disabled = !!disabled;
-    if (text) btn.textContent = text;
+  const setDisabled = (el, disabled) => {
+    if (!el) return;
+    el.disabled = !!disabled;
   };
 
-  function renderAuthUi(state) {
+  const renderAuthUi = (state) => {
+    // Must be non-recursive and never loop.
     const signIn = elAccountSignIn();
+    const googleOverlay = elAuthGoogle();
     const logout = elAccountLogout();
-    const overlayGoogle = elOverlayGoogle();
 
-    // State model:
-    // signedOut | signedIn | signingIn | signingOut
-    if (state === 'signedOut') {
-      setButtonVisibility(signIn, true);
-      setButtonState(signIn, false, 'Google Sign In');
+    // SIGNED_OUT
+    if (state === STATES.SIGNED_OUT) {
+      setVisible(signIn, true);
+      setDisabled(signIn, false);
+      if (signIn) signIn.textContent = 'Google Sign In';
 
-      setButtonVisibility(overlayGoogle, true);
-      setButtonState(overlayGoogle, false, 'Continue with Google');
+      setVisible(googleOverlay, true);
+      setDisabled(googleOverlay, false);
+      if (googleOverlay) googleOverlay.textContent = 'Continue with Google';
 
-      setButtonVisibility(logout, false);
-      setButtonState(logout, true);
+      setVisible(logout, false);
+      setDisabled(logout, true);
       return;
     }
 
-    if (state === 'signedIn') {
-      setButtonVisibility(signIn, false);
-      setButtonState(signIn, true);
+    // SIGNING_IN
+    if (state === STATES.SIGNING_IN) {
+      setVisible(signIn, true);
+      setDisabled(signIn, true);
 
-      setButtonVisibility(overlayGoogle, false);
-      setButtonState(overlayGoogle, true);
+      setVisible(googleOverlay, true);
+      setDisabled(googleOverlay, true);
 
-      setButtonVisibility(logout, true);
-      setButtonState(logout, false, 'Logout');
+      setVisible(logout, false);
+      setDisabled(logout, true);
       return;
     }
 
-    if (state === 'signingIn') {
-      setButtonVisibility(signIn, true);
-      setButtonState(signIn, true, 'Signing in...');
+    // SIGNED_IN
+    if (state === STATES.SIGNED_IN) {
+      setVisible(signIn, false);
+      setDisabled(signIn, true);
 
-      setButtonVisibility(overlayGoogle, true);
-      setButtonState(overlayGoogle, true, 'Signing in...');
+      setVisible(googleOverlay, false);
+      setDisabled(googleOverlay, true);
 
-      setButtonVisibility(logout, false);
-      setButtonState(logout, true);
+      setVisible(logout, true);
+      setDisabled(logout, false);
+      if (logout) logout.textContent = 'Logout';
       return;
     }
 
-    if (state === 'signingOut') {
-      setButtonVisibility(signIn, false);
-      setButtonState(signIn, true);
+    // SIGNING_OUT
+    if (state === STATES.SIGNING_OUT) {
+      setVisible(signIn, false);
+      setDisabled(signIn, true);
 
-      setButtonVisibility(overlayGoogle, false);
-      setButtonState(overlayGoogle, true);
+      setVisible(googleOverlay, false);
+      setDisabled(googleOverlay, true);
 
-      setButtonVisibility(logout, true);
-      setButtonState(logout, true, 'Signing out...');
+      setVisible(logout, true);
+      setDisabled(logout, true);
+      if (logout) logout.textContent = 'Signing out...';
       return;
     }
 
-    // default
-    renderAuthUi('signedOut');
+    // Unknown => safe default
+    renderAuthUi(STATES.SIGNED_OUT);
+  };
+
+  // Firebase compat bootstrap — initialize exactly once
+  function ensureFirebaseCompatInitialized() {
+    try {
+      const fb = window.firebase;
+      const cfg = window.firebaseConfig || window.FIREBASE_CONFIG || window.firebaseCfg;
+
+      if (fb && typeof fb.initializeApp === 'function' && cfg) {
+        // Initialize exactly once
+        if (!Array.isArray(fb.apps)) fb.apps = [];
+        if (fb.apps.length === 0) fb.initializeApp(cfg);
+
+        window.FIREBASE_READY = true;
+
+        // Expose compat globals used by the controller
+        window.auth = typeof fb.auth === 'function' ? fb.auth() : null;
+        window.db = typeof fb.firestore === 'function' ? fb.firestore() : null;
+
+        return true;
+      }
+
+      window.FIREBASE_READY = false;
+      return false;
+    } catch {
+      window.FIREBASE_READY = false;
+      return false;
+    }
   }
 
-  function getFbAuth() {
+  // Ensure ready before controller wiring
+  const initOk = ensureFirebaseCompatInitialized();
+
+  // Must render something immediately
+  renderAuthUi(STATES.SIGNED_OUT);
+
+  const getAuthOrNull = () => {
     if (window.FIREBASE_READY !== true) return null;
-    if (!window.auth) return null;
-    return window.auth;
-  }
+    return window.auth || null;
+  };
 
-  // Initial strict render
-  renderAuthUi('signedOut');
-
-  // Single capturing click handler
+  // Exactly one document-level capturing click handler
   document.addEventListener(
     'click',
     async (e) => {
+      // Handles ONLY: accountSignInBtn, authGoogleBtn, accountLogoutBtn
       const t = e.target;
-      const matchedSignIn = t && t.closest ? t.closest('#accountSignInBtn, #authGoogleBtn') : null;
-      const matchedLogout = t && t.closest ? t.closest('#accountLogoutBtn') : null;
-      if (!matchedSignIn && !matchedLogout) return;
+      const signInBtn = t && t.closest ? t.closest('#accountSignInBtn') : null;
+      const googleBtn = t && t.closest ? t.closest('#authGoogleBtn') : null;
+      const logoutBtn = t && t.closest ? t.closest('#accountLogoutBtn') : null;
+
+      if (!signInBtn && !googleBtn && !logoutBtn) return;
 
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
 
-      const fbAuth = getFbAuth();
-      if (!fbAuth) return;
+      const auth = getAuthOrNull();
+      if (!auth) return;
 
-      if (matchedSignIn) {
+      // Sign in
+      if (signInBtn || googleBtn) {
         if (window.__GOOGLE_SIGNIN_IN_PROGRESS__) return;
         window.__GOOGLE_SIGNIN_IN_PROGRESS__ = true;
-        renderAuthUi('signingIn');
+        renderAuthUi(STATES.SIGNING_IN);
 
         try {
           const provider = new window.firebase.auth.GoogleAuthProvider();
-          await fbAuth.signInWithPopup(provider);
+          await auth.signInWithPopup(provider);
         } finally {
           window.__GOOGLE_SIGNIN_IN_PROGRESS__ = false;
         }
         return;
       }
 
-      if (matchedLogout) {
+      // Sign out
+      if (logoutBtn) {
         if (window.__GOOGLE_SIGNOUT_IN_PROGRESS__) return;
         window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = true;
-        renderAuthUi('signingOut');
+        renderAuthUi(STATES.SIGNING_OUT);
 
         try {
-          await fbAuth.signOut();
+          await auth.signOut();
         } finally {
           window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = false;
         }
@@ -166,32 +195,55 @@
     true,
   );
 
-  // One auth-state binding
-  const bind = () => {
-    const fbAuth = getFbAuth();
-    if (!fbAuth || typeof fbAuth.onAuthStateChanged !== 'function') return false;
-
-    fbAuth.onAuthStateChanged((user) => {
-      renderAuthUi(user ? 'signedIn' : 'signedOut');
-      try {
-        if (typeof renderAccountAuthUi === 'function') renderAccountAuthUi();
-      } catch {}
-    });
-
-    return true;
-  };
-
-  if (!bind()) {
+  // Exactly one auth state controller (onAuthStateChanged)
+  (function bindAuthStateOnce() {
     const start = Date.now();
+    const attempt = () => {
+      const auth = getAuthOrNull();
+      if (!auth || typeof auth.onAuthStateChanged !== 'function') return false;
+
+      auth.onAuthStateChanged((user) => {
+        renderAuthUi(user ? STATES.SIGNED_IN : STATES.SIGNED_OUT);
+
+        // Update signed-in account UI text directly from Firebase user.
+        // Required fields: displayName + email.
+        try {
+          const nameEl = document.getElementById('accountUserName');
+          const emailEl = document.getElementById('accountUserEmail');
+          const badgeTextEl = document.getElementById('authStateBadgeText');
+
+          if (user) {
+            if (nameEl) nameEl.textContent = user.displayName || 'Google User';
+            if (emailEl) emailEl.textContent = user.email || '';
+            if (badgeTextEl) badgeTextEl.textContent = 'Signed in';
+          } else {
+            if (nameEl) nameEl.textContent = '—';
+            if (emailEl) emailEl.textContent = '—';
+            if (badgeTextEl) badgeTextEl.textContent = 'Guest';
+          }
+
+          // Keep any existing UI-only renderer in sync (badge overlays etc.).
+          if (typeof window.renderAccountAuthUi === 'function') window.renderAccountAuthUi();
+          else if (typeof renderAccountAuthUi === 'function') renderAccountAuthUi();
+        } catch {}
+      });
+
+      return true;
+    };
+
+    if (attempt()) return;
+
     const t = setInterval(() => {
-      if (bind()) clearInterval(t);
-      else if (Date.now() - start > 4000) {
+      if (attempt()) clearInterval(t);
+      else if (Date.now() - start > 5000) {
         clearInterval(t);
-        renderAuthUi('signedOut');
+        window.FIREBASE_READY = false;
+        renderAuthUi(STATES.SIGNED_OUT);
       }
     }, 25);
-  }
+  })();
 })();
+
 
 
 (() => {
@@ -1579,15 +1631,99 @@
       return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
     }
 
+    // --- Weekly Progress data calculation (Mon..Sun) ---
+    // HOTFIX: fix day placement bug by building current week keys from todayKey
+    // and counting by index ONLY (no parsing history keys, no remapping).
+
+    const parseLocalDateKey = (key) => {
+      const [y, m, d] = key.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    };
+
+    // 1) Use SAME todayKey used by analytics.
+    const todayKeyForAnalytics = todayKey();
+
+    // 2-4) Build current week (Mon..Sun) from todayKey.
+    const todayDate = parseLocalDateKey(todayKeyForAnalytics);
+    const monday = new Date(todayDate);
+    monday.setDate(todayDate.getDate() - ((todayDate.getDay() + 6) % 7));
+
+    const weekKeys = [];
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const formatLocalDateKey = (dateObj) => {
+      const y = dateObj.getFullYear();
+      const m = pad2(dateObj.getMonth() + 1);
+      const d = pad2(dateObj.getDate());
+      return `${y}-${m}-${d}`;
+    };
+
+    // 4) Exactly 7 keys: Mon Tue Wed Thu Fri Sat Sun
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + i);
+      weekKeys.push(formatLocalDateKey(date));
+    }
+
+    // Temporary console check (remove after confirming bugfix)
+    console.log(
+      'todayKey',
+      todayKeyForAnalytics,
+      'todayIndex',
+      (parseLocalDateKey(todayKeyForAnalytics).getDay() + 6) % 7,
+      'weekKeys',
+      weekKeys
+    );
+
+    // Build week buckets (by index only)
+    const weekly = [
+      { label: 'Mon', completed: 0, notDone: 0, missed: 0 },
+      { label: 'Tue', completed: 0, notDone: 0, missed: 0 },
+      { label: 'Wed', completed: 0, notDone: 0, missed: 0 },
+      { label: 'Thu', completed: 0, notDone: 0, missed: 0 },
+      { label: 'Fri', completed: 0, notDone: 0, missed: 0 },
+      { label: 'Sat', completed: 0, notDone: 0, missed: 0 },
+      { label: 'Sun', completed: 0, notDone: 0, missed: 0 },
+    ];
+
+    // 5) Count by index ONLY.
+    // IMPORTANT semantics for weekly graph:
+    // - Count ONLY actual saved statuses.
+    // - Do NOT treat missing/undefined as "missed".
+    // - Future days must remain 0 because we only build the current week from todayKey().
+    for (const habit of (state.habits || [])) {
+      for (let i = 0; i < 7; i++) {
+        const dateKey = weekKeys[i];
+        const status = habit?.history?.[dateKey];
+
+        if (status === 'done') weekly[i].completed++;
+        else if (status === 'not_done') weekly[i].notDone++;
+        else if (status === 'missed') weekly[i].missed++;
+        // else: missing/undefined/blank => keep day blank (0)
+      }
+    }
+
+
+    // IMPORTANT: keep existing rendering below, but we must drive it from weekly[]
+    // to ensure correct placement.
+    for (let i = 0; i < 7; i++) {
+      dayCompleted[i] = weekly[i].completed;
+      dayNotDone[i] = weekly[i].notDone;
+      dayMissed[i] = weekly[i].missed;
+    }
+
+
+
+
     function point(x, y) {
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     }
 
-    // Draw isometric stacked blocks per day
+    // Render using Monday-first bucket indices directly.
     for (let i = 0; i < 7; i++) {
       const completedVal = dayCompleted[i];
       const notDoneVal = dayNotDone[i];
       const missedVal = dayMissed[i];
+
 
       if (completedVal === 0 && notDoneVal === 0 && missedVal === 0) continue;
 
@@ -4782,212 +4918,12 @@ function playAlarmAudio(url) {
 
 
 
-  // =============================
-  // Single global auth click handler (CAPTURING)
-  // =============================
-  // Disabled by FINAL auth click fix block at EOF.
-  // (Keeps codebase unchanged for other behaviors.)
-  window.__HABITTRACKER_AUTH_CAPTURE_HANDLER_BOUND__ = true;
-
-
-  // Global auth helpers (required by external UI/debug buttons).
-  // They must be available regardless of whether this file's internal overlay wiring has run.
-  window.showHabitLogin = function showHabitLogin() {
-    try {
-      localStorage.removeItem('habitTracker.auth.decided');
-      localStorage.removeItem('habitTracker.auth.mode');
-      localStorage.removeItem('habitTracker.auth.uid');
-    } catch {}
-
-    openAuthOverlay();
-
-    try {
-      console.log('[auth] login overlay requested');
-    } catch {}
-  };
-
-  window.logoutHabitTracker = async function logoutHabitTracker() {
-    // Deprecated external hook: keep UI-only to avoid duplicate auth execution.
-    try {
-      if (typeof renderAccountAuthUi === 'function') renderAccountAuthUi();
-      openAuthOverlay();
-    } catch {}
-  };
-
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
 })();
 
-// ==============================
-// Minimal compat-only Google auth controller
-// (UI-only; no habit/alarm/analytics/localStorage/save mutations)
-// ==============================
-(function initFinalAuthController() {
-  'use strict';
-
-  // Required global locks
-  window.__GOOGLE_SIGNIN_IN_PROGRESS__ = window.__GOOGLE_SIGNIN_IN_PROGRESS__ || false;
-  window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = window.__GOOGLE_SIGNOUT_IN_PROGRESS__ || false;
-
-  // Avoid duplicate binding
-  if (window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__) return;
-  window.__HABITTRACKER_AUTH_CONTROLLER_BOUND__ = true;
-
-  const signInBtn = () => document.getElementById('accountSignInBtn') || null;
-  const logoutBtn = () => document.getElementById('accountLogoutBtn') || null;
-  const overlayGoogleBtn = () => document.getElementById('authGoogleBtn') || null;
 
 
-  function renderAuthUi(user, mode) {
-    const sBtn = signInBtn();
-    const lBtn = logoutBtn();
-    const oBtn = overlayGoogleBtn();
-
-
-    // Strict mode mapping: never show Sign-In + Logout together.
-    const m = mode;
-
-    const setSignIn = (visible, disabled, text) => {
-      if (!sBtn) return;
-      sBtn.style.display = visible ? '' : 'none';
-      sBtn.disabled = !!disabled;
-      if (visible && text) sBtn.textContent = text;
-    };
-
-    const setOverlaySignIn = (visible, disabled, text) => {
-      if (!oBtn) return;
-      oBtn.style.display = visible ? '' : 'none';
-      oBtn.disabled = !!disabled;
-      if (visible && text) oBtn.textContent = text;
-    };
-
-    const setLogout = (visible, disabled, text) => {
-      if (!lBtn) return;
-      lBtn.style.display = visible ? '' : 'none';
-      lBtn.disabled = !!disabled;
-      if (visible && text) lBtn.textContent = text;
-    };
-
-    if (m === 'signedOut') {
-      setSignIn(true, false, 'Google Sign In');
-      setOverlaySignIn(true, false, 'Continue with Google');
-      setLogout(false, true, 'Logout');
-      return;
-    }
-
-    if (m === 'signedIn') {
-      setSignIn(false, true, 'Google Sign In');
-      setOverlaySignIn(false, true, 'Continue with Google');
-      setLogout(true, false, 'Logout');
-      return;
-    }
-
-    if (m === 'signingIn') {
-      setSignIn(true, true, 'Signing in...');
-      setOverlaySignIn(true, true, 'Signing in...');
-      setLogout(false, true, 'Signing in...');
-      return;
-    }
-
-    if (m === 'signingOut') {
-      setSignIn(false, true, 'Google Sign In');
-      setOverlaySignIn(false, true, 'Continue with Google');
-      setLogout(true, true, 'Signing out...');
-      return;
-    }
-
-    // Fallback: default to signedOut if unknown.
-    setSignIn(true, false, 'Google Sign In');
-    setOverlaySignIn(true, false, 'Continue with Google');
-    setLogout(false, true, 'Logout');
-  }
-
-  // Initial render
-  renderAuthUi(null, 'signedOut');
-
-
-  function getFbAuth() {
-    if (window.FIREBASE_READY !== true) return null;
-    if (!window.auth) return null;
-    return window.auth;
-  }
-
-  // ONE document-level capturing click handler
-  document.addEventListener(
-    'click',
-    async function (e) {
-      const t = e.target;
-      const matchedSignIn = t && t.closest ? t.closest('#accountSignInBtn, #authGoogleBtn') : null;
-      const matchedLogout = t && t.closest ? t.closest('#accountLogoutBtn') : null;
-      if (!matchedSignIn && !matchedLogout) return;
-
-      // Required strict preventDefault/stopPropagation/stopImmediatePropagation
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-
-      const fbAuth = getFbAuth();
-      if (!fbAuth) return;
-
-      if (matchedSignIn) {
-        if (window.__GOOGLE_SIGNIN_IN_PROGRESS__ === true) return;
-        window.__GOOGLE_SIGNIN_IN_PROGRESS__ = true;
-        renderAuthUi({ state: 'signing_in' });
-
-        try {
-          const provider = new window.firebase.auth.GoogleAuthProvider();
-          await fbAuth.signInWithPopup(provider); // exactly once
-        } finally {
-          window.__GOOGLE_SIGNIN_IN_PROGRESS__ = false;
-        }
-        return;
-      }
-
-      if (matchedLogout) {
-        if (window.__GOOGLE_SIGNOUT_IN_PROGRESS__ === true) return;
-        window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = true;
-        renderAuthUi({ state: 'signing_out' });
-
-        try {
-          await fbAuth.signOut(); // exactly once
-        } finally {
-          window.__GOOGLE_SIGNOUT_IN_PROGRESS__ = false;
-        }
-        return;
-      }
-    },
-    true
-  );
-
-  // ONE auth state render binding
-  const bind = () => {
-    const fbAuth = getFbAuth();
-    if (!fbAuth || typeof fbAuth.onAuthStateChanged !== 'function') return false;
-
-    fbAuth.onAuthStateChanged(function (user) {
-      renderAuthUi({ state: user ? 'signed_in' : 'signed_out' });
-
-      // Optional: allow account UI refresh without controlling enable/disable/display
-      try {
-        if (typeof renderAccountAuthUi === 'function') renderAccountAuthUi();
-      } catch {}
-    });
-
-    return true;
-  };
-
-  // Wait briefly for compat auth init
-  if (!bind()) {
-    const start = Date.now();
-    const t = setInterval(() => {
-      if (bind()) clearInterval(t);
-      else if (Date.now() - start > 4000) {
-        clearInterval(t);
-        renderAuthUi({ state: 'signed_out' });
-      }
-    }, 25);
-  }
-})();
 
 
 

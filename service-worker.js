@@ -19,9 +19,10 @@ const CACHE_NAME = "habitTracker.shell.v2";
 const SHELL_CACHE_URLS = [
   "/",
   "/index.html",
-  "/index_fixed.html",
   "/style.css",
+
   "/script.js",
+
   "/manifest.json",
   "/icon.png",
 ];
@@ -36,8 +37,9 @@ self.addEventListener("install", (event) => {
       await cache.addAll([
         "/",
         "/index.html",
-        "/index_fixed.html",
+
         "/style.css",
+
         "/script.js",
         "/manifest.json",
         "/icon.png",
@@ -101,9 +103,11 @@ self.addEventListener("fetch", (event) => {
           return networkResp;
         } catch (e) {
           // Offline: return cached index_fixed.html (preferred).
-          const fixed = await cache.match("/index_fixed.html");
+          const fixed = await cache.match("/index.html");
+
           if (fixed) return fixed;
           const fallback = await cache.match("/index.html");
+
           if (fallback) return fallback;
           // Final fallback: if nothing cached, let the request fail.
           return new Response("Offline", {
@@ -137,8 +141,9 @@ self.addEventListener("fetch", (event) => {
         path === "/icon.png" ||
         path === "/privacy.html" ||
         path === "/index.html" ||
-        path === "/index_fixed.html" ||
+
         accept.includes("text/css") ||
+
         accept.includes("application/javascript");
 
       if (!isAsset) {

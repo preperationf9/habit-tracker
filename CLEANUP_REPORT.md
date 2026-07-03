@@ -40,7 +40,8 @@ debug_instrument_layout.js
 __backup_temp.ps1
 script.js.bak_to_repair_alarm_only.txt
 
-backups/index_fixed.html.bak.20260614_030620
+backups/index_fixed_removed.html.bak.20260614_030620
+
 backups/manifest.json.bak_alarm_fix_20260617_000000.bak
 backups/privacy.html.bak.20260614_030620
 backups/script.js.bak_alarm_fix_20260617_000000.bak
