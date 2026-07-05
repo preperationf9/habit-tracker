@@ -13,7 +13,8 @@
 */
 
 // Bump cache name when changing offline behavior.
-const CACHE_NAME = "habitTracker.shell.v2";
+// NOTE: bump is required to avoid mobile getting stale cached auth code / index.
+const CACHE_NAME = "habitTracker.shell.v3";
 
 // (Intentionally only used for readability; caching is done via explicit addAll below.)
 const SHELL_CACHE_URLS = [
@@ -33,17 +34,18 @@ self.addEventListener("install", (event) => {
       const cache = await caches.open(CACHE_NAME);
 
       // Cache required app-shell assets only.
+      // IMPORTANT: keep these files fresh; cache shell only, no auth redirect handlers.
       // Note: use absolute paths starting with '/' to match navigator.serviceWorker.register('/service-worker.js') scope.
       await cache.addAll([
         "/",
         "/index.html",
-
         "/style.css",
-
         "/script.js",
+        "/firebaseConfig.js",
         "/manifest.json",
         "/icon.png",
       ]);
+
 
       // Cache icons directory entries if present (best-effort).
       // If /icons contains multiple files, they will be requested normally and handled by cache-first.
@@ -60,8 +62,9 @@ self.addEventListener("activate", (event) => {
       await Promise.all(
         keys.map((k) => {
           // Safe cleanup: remove only old shell caches.
-          if (k.startsWith("habitTracker.shell.") && k !== CACHE_NAME)
+          if (k.startsWith("habitTracker.shell.") && k !== CACHE_NAME) {
             return caches.delete(k);
+          }
           return Promise.resolve();
         }),
       );
@@ -120,7 +123,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Assets: cache-first for same-origin static app shell assets.
+  // Assets: network-first for the app shell (fixes stale auth JS on mobile).
   if (request.method !== "GET") return;
 
   const assetCache = caches.open(CACHE_NAME);
@@ -129,39 +132,70 @@ self.addEventListener("fetch", (event) => {
     (async () => {
       const cache = await assetCache;
 
-      // Only do cache-first for likely static assets.
       const accept = request.headers.get("accept") || "";
       const path = url.pathname;
-      const isAsset =
+
+      const isLikelyStatic =
         path.startsWith("/sounds/") ||
         path.startsWith("/icons/") ||
         path === "/style.css" ||
         path === "/script.js" ||
+        path === "/firebaseConfig.js" ||
         path === "/manifest.json" ||
         path === "/icon.png" ||
         path === "/privacy.html" ||
         path === "/index.html" ||
-
         accept.includes("text/css") ||
-
         accept.includes("application/javascript");
 
-      if (!isAsset) {
+      if (!isLikelyStatic) {
         // Don’t cache/app-shell-route unknown same-origin requests.
-        // Let network handle them.
         return fetch(request);
       }
 
-      const cached = await cache.match(url.pathname);
+      // Never cache/serve Firebase auth handler URLs.
+      // If a request looks like a redirect/handler endpoint, bypass SW.
+      const looksLikeAuthHandler =
+        path.includes("/__/auth") ||
+        path.includes("identitytoolkit") ||
+        path.includes("securetoken") ||
+        path.includes("oauth") ||
+        path.includes("/__/redirect") ||
+        path.includes("/__/auth/handler");
+      if (looksLikeAuthHandler) {
+        return fetch(request);
+      }
+
+      // Network-first only for navigation + critical shell scripts/styles.
+      const isCriticalShell =
+        path === "/index.html" ||
+        path === "/script.js" ||
+        path === "/firebaseConfig.js" ||
+        path === "/style.css" ||
+        path === "/manifest.json" ||
+        path === "/icon.png";
+
+      if (isCriticalShell) {
+        try {
+          const resp = await fetch(request);
+          if (resp && resp.ok) cache.put(path, resp.clone());
+          return resp;
+        } catch (e) {
+          const cached = await cache.match(path);
+          if (cached) return cached;
+          return Promise.reject(e);
+        }
+      }
+
+      // For remaining static assets, cache-first.
+      const cached = await cache.match(path);
       if (cached) return cached;
 
       try {
         const resp = await fetch(request);
-        // Best-effort: cache the fetched asset.
-        if (resp && resp.ok) cache.put(url.pathname, resp.clone());
+        if (resp && resp.ok) cache.put(path, resp.clone());
         return resp;
       } catch (e) {
-        // Offline and not in cache: fail naturally for non-shell assets.
         return cached || Promise.reject(e);
       }
     })(),
