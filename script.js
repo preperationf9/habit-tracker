@@ -134,8 +134,47 @@
     }
   }
 
+  let _firebaseAuthPersistenceLocalPromise = null;
+
+  async function ensureFirebaseAuthPersistenceLocal() {
+    // Requirement: LOCAL persistence for mobile/PWA redirect reliability.
+    // Must be fully awaited before Google sign-in.
+    if (_firebaseAuthPersistenceLocalPromise) return _firebaseAuthPersistenceLocalPromise;
+
+    _firebaseAuthPersistenceLocalPromise = (async () => {
+      try {
+        const auth = getAuthOrNull();
+        if (!auth || !auth.setPersistence) return false;
+
+        // Compat: firebase.auth.Auth.Persistence
+        const Persistence =
+          window.firebase?.auth?.Auth?.Persistence ||
+          (window.firebase && window.firebase.auth && window.firebase.auth.Auth
+            ? window.firebase.auth.Auth.Persistence
+            : null);
+
+        if (!Persistence || !Persistence.LOCAL) return false;
+
+        await auth.setPersistence(Persistence.LOCAL);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+
+    return _firebaseAuthPersistenceLocalPromise;
+  }
+
+
   // Ensure ready before controller wiring
   const initOk = ensureFirebaseCompatInitialized();
+
+  // Persistence is async; fire-and-forget so we don't block UI.
+  // Important: call before sign-in to avoid inconsistent auth state.
+  try {
+    void ensureFirebaseAuthPersistenceLocal();
+  } catch {}
+
 
   // Must render something immediately
   renderAuthUi(STATES.SIGNED_OUT);
@@ -171,8 +210,17 @@
         renderAuthUi(STATES.SIGNING_IN);
 
         try {
+          await ensureFirebaseAuthPersistenceLocal();
           const provider = new window.firebase.auth.GoogleAuthProvider();
           await auth.signInWithPopup(provider);
+        } catch (err) {
+          try {
+            const msg = 'Google login failed. Please try again.';
+            const setStatusEl = document.getElementById('authStatus');
+            if (setStatusEl) setStatusEl.textContent = msg;
+            const errBadge = document.getElementById('authStateBadgeText');
+            if (errBadge) errBadge.textContent = 'Guest';
+          } catch {}
         } finally {
           window.__GOOGLE_SIGNIN_IN_PROGRESS__ = false;
         }
