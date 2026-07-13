@@ -1,0 +1,16 @@
+{
+  "name": "daily-habit-tracker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@simplewebauthn/browser": "^10.0.0",
+    "@simplewebauthn/server": "^11.0.0",
+    "firebase-admin": "^13.0.0"
+  },
+  "scripts": {
+    "check": "node --check api/health.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}

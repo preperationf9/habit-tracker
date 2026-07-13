@@ -59,13 +59,7 @@
               >
                 Continue with Google
               </button>
-              <button
-                class="ghost-btn auth-btn"
-                type="button"
-                id="authPhoneBtn"
-              >
-                Continue with Mobile Number
-              </button>
+
               <button
                 class="ghost-btn auth-btn"
                 type="button"
@@ -73,56 +67,23 @@
               >
                 Continue as Guest
               </button>
+              <button
+                class="ghost-btn auth-btn"
+                type="button"
+                id="authEmailBtn"
+              >
+                Continue with Email
+              </button>
+              <button
+                class="ghost-btn auth-btn"
+                type="button"
+                id="authPasskeyBtn"
+              >
+                Continue with Passkey
+              </button>
             </div>
 
-            <!-- STEP 2A (UI ONLY): Phone OTP scaffolding — no logic yet -->
-            <div
-              class="auth-otp"
-              id="authOtpSection"
-              aria-hidden="true"
-              style="display: none"
-            >
-              <div class="auth-field">
-                <div class="auth-field-label">Mobile number</div>
-                <input
-                  id="phoneNumberInput"
-                  type="tel"
-                  inputmode="tel"
-                  autocomplete="tel"
-                  placeholder="e.g., +1 555 123 4567"
-                />
-              </div>
 
-              <div class="auth-otp-actions">
-                <button class="glow-btn" type="button" id="sendOtpBtn">
-                  Send OTP
-                </button>
-                <button class="ghost-btn" type="button" id="verifyOtpBtn" disabled>
-                  Verify OTP
-                </button>
-              </div>
-
-              <!-- reCAPTCHA (invisible) host for Firebase phone auth -->
-              <div id="recaptcha-container" aria-hidden="true"></div>
-
-              <div class="auth-field" style="margin-top: 10px">
-                <div class="auth-field-label">OTP</div>
-                <input
-                  id="otpCodeInput"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="one-time-code"
-                  placeholder="Enter 6-digit code"
-                  maxlength="6"
-                />
-              </div>
-
-              <div
-                class="auth-status"
-                id="phoneOtpStatus"
-                aria-live="polite"
-              ></div>
-            </div>
 
             <div class="auth-divider"></div>
 
@@ -630,6 +591,24 @@
                   </button>
                 </div>
 
+                <div class="account-actions" style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center">
+                  <button class="ghost-btn" id="accountGuestBtn" type="button" style="flex: 1 1 auto; min-width: 180px;">
+                    Continue as Guest
+                  </button>
+                  <button class="ghost-btn" id="accountGoogleOverlayBtn" type="button" style="flex: 1 1 auto; min-width: 180px; display:none;">
+                    Continue with Google
+                  </button>
+                  <button class="ghost-btn" id="accountEmailBtn" type="button" style="flex: 1 1 auto; min-width: 180px;">
+                    Continue with Email Link
+                  </button>
+                  <button class="ghost-btn" id="accountPasskeyBtn" type="button" style="flex: 1 1 auto; min-width: 180px;">
+                    Continue with Passkey
+                  </button>
+                </div>
+
+                <!-- Visible auth methods are handled by the existing auth overlay buttons (authEmailBtn/authPasskeyBtn). -->
+
+
                 <div class="account-hint" id="accountGuestHint">
                   Guest mode: you can use the app offline without signing out.
                 </div>
@@ -1115,6 +1094,10 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+
+    <!-- Passkey browser integration (minimal) -->
+    <script src="./simplewebauthn-browser.bundle.js"></script>
+
     <script src="script.js"></script>
     <script>
       // Keep in sync with this file: compat init + app boot happen in script.js.

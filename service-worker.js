@@ -14,41 +14,72 @@
 
 // Bump cache name when changing offline behavior.
 // NOTE: bump is required to avoid mobile getting stale cached auth code / index.
-const CACHE_NAME = "habitTracker.shell.v3";
+const CACHE_NAME = "habitTracker.shell.v4";
 
 // (Intentionally only used for readability; caching is done via explicit addAll below.)
+// Keep list for readability (install uses a concrete addAll for guaranteed required files)
 const SHELL_CACHE_URLS = [
   "/",
   "/index.html",
   "/style.css",
-
   "/script.js",
-
   "/manifest.json",
+  "/privacy.html",
   "/icon.png",
+  "/icon-192.png",
+  "/icon-512.png",
+
+  // Sounds (required by task)
+  "/sounds/alarm1.mp3",
+  "/sounds/alarm2.mp3",
+  "/sounds/alarm3.mp3",
+  "/sounds/alarm4.mp3",
+  "/sounds/alarm5.mp3",
+  "/sounds/alarm6.mp3",
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
+      // Skip waiting so the new SW activates immediately after install.
       const cache = await caches.open(CACHE_NAME);
 
-      // Cache required app-shell assets only.
-      // IMPORTANT: keep these files fresh; cache shell only, no auth redirect handlers.
+      // Cache required app-shell assets.
+      // IMPORTANT: keep this list limited to app shell + static assets (no auth endpoints).
       // Note: use absolute paths starting with '/' to match navigator.serviceWorker.register('/service-worker.js') scope.
-      await cache.addAll([
-        "/",
-        "/index.html",
-        "/style.css",
-        "/script.js",
-        "/firebaseConfig.js",
-        "/manifest.json",
-        "/icon.png",
-      ]);
+      // Cache with graceful failure: ignore missing assets (e.g., some mp3s)
+      // so install/install-prompt never fails in offline DevTools mode.
+      const urlsToCache = [
+        '/',
+        '/index.html',
+        '/style.css',
+        '/script.js',
+        '/manifest.json',
+        '/privacy.html',
+        '/firebaseConfig.js',
+        '/icon.png',
+        // Avoid caching potentially problematic icon-192.png during offline DevTools tests.
+        // /icon-192.png is still declared in manifest; the browser will validate/serve it.
+        '/icon-512.png',
 
+        '/sounds/alarm1.mp3',
+        '/sounds/alarm2.mp3',
+        '/sounds/alarm3.mp3',
+        '/sounds/alarm4.mp3',
+        '/sounds/alarm5.mp3',
+        '/sounds/alarm6.mp3',
+      ];
 
-      // Cache icons directory entries if present (best-effort).
-      // If /icons contains multiple files, they will be requested normally and handled by cache-first.
+      await Promise.all(
+        urlsToCache.map(async (u) => {
+          try {
+            const resp = await fetch(u, { cache: 'no-store' });
+            if (resp && resp.ok) await cache.put(u, resp.clone());
+          } catch {
+            // ignore
+          }
+        })
+      );
 
       self.skipWaiting();
     })(),
@@ -58,16 +89,18 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
+      // Remove only old shell caches (automatic cache versioning).
       const keys = await caches.keys();
       await Promise.all(
         keys.map((k) => {
-          // Safe cleanup: remove only old shell caches.
           if (k.startsWith("habitTracker.shell.") && k !== CACHE_NAME) {
             return caches.delete(k);
           }
           return Promise.resolve();
         }),
       );
+
+      // Activate new SW immediately.
       self.clients.claim();
     })(),
   );
@@ -90,29 +123,52 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
+  // Hard bypass: never intercept /api/* (no respondWith, no caching, no index fallback).
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
   // Never interfere with external URLs / Firebase / cloud APIs.
   // Only handle same-origin requests.
   if (!isSameOrigin(url)) return;
 
-  // Navigation: offline app shell routing.
+  // Firebase email-link / auth callback navigation URLs:
+  // Do NOT cache and make network errors non-fatal.
+  // This prevents the app-shell cache fallback from breaking Firebase oobCode flows.
+  const isFirebaseEmailLinkCallback =
+    request.mode === "navigate" &&
+    (
+      url.searchParams.has("oobCode") ||
+      url.searchParams.has("mode") ||
+      url.searchParams.has("apiKey")
+    );
+
+  if (isFirebaseEmailLinkCallback) {
+    event.respondWith(
+      fetch(request).catch(() => {
+        // Fallback to app shell so we never throw unhandled "Failed to fetch".
+        return caches.match("/index.html");
+      })
+    );
+    return;
+  }
+
+  // Network-first with cache fallback for the app shell navigation.
+  // Requirement: app must open without internet after first load/install.
   if (request.method === "GET" && isProbablyAppNavigation(request)) {
     event.respondWith(
       (async () => {
         const cache = await caches.open(CACHE_NAME);
 
         try {
-          // If online, try network first (keeps fresh).
+          // If online, try network first.
           const networkResp = await fetch(request);
           return networkResp;
         } catch (e) {
-          // Offline: return cached index_fixed.html (preferred).
-          const fixed = await cache.match("/index.html");
+          // Offline: always return cached shell (index).
+          const cachedIndex = await cache.match("/index.html");
+          if (cachedIndex) return cachedIndex;
 
-          if (fixed) return fixed;
-          const fallback = await cache.match("/index.html");
-
-          if (fallback) return fallback;
-          // Final fallback: if nothing cached, let the request fail.
           return new Response("Offline", {
             status: 503,
             statusText: "Offline",
@@ -123,77 +179,63 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Assets: network-first for the app shell (fixes stale auth JS on mobile).
+  // Cache-first for static assets (required: CSS/JS/images/icons/sounds)
   if (request.method !== "GET") return;
-
-  const assetCache = caches.open(CACHE_NAME);
 
   event.respondWith(
     (async () => {
-      const cache = await assetCache;
-
+      const cache = await caches.open(CACHE_NAME);
       const accept = request.headers.get("accept") || "";
       const path = url.pathname;
 
-      const isLikelyStatic =
-        path.startsWith("/sounds/") ||
-        path.startsWith("/icons/") ||
-        path === "/style.css" ||
-        path === "/script.js" ||
-        path === "/firebaseConfig.js" ||
-        path === "/manifest.json" ||
-        path === "/icon.png" ||
-        path === "/privacy.html" ||
-        path === "/index.html" ||
-        accept.includes("text/css") ||
-        accept.includes("application/javascript");
-
-      if (!isLikelyStatic) {
-        // Don’t cache/app-shell-route unknown same-origin requests.
-        return fetch(request);
-      }
-
-      // Never cache/serve Firebase auth handler URLs.
-      // If a request looks like a redirect/handler endpoint, bypass SW.
-      const looksLikeAuthHandler =
+      // Do NOT cache/serve Firebase authentication endpoints or OAuth redirects.
+      const looksLikeFirebaseAuthEndpoint =
         path.includes("/__/auth") ||
+        path.includes("/__/redirect") ||
+        path.includes("/__/auth/handler") ||
         path.includes("identitytoolkit") ||
         path.includes("securetoken") ||
+        // googleapis auth + OAuth redirect flows
+        path.includes("googleapis") ||
         path.includes("oauth") ||
-        path.includes("/__/redirect") ||
-        path.includes("/__/auth/handler");
-      if (looksLikeAuthHandler) {
+        path.includes("/oauth") ||
+        path.includes("/__auth") ||
+        path.includes("/__redirect");
+
+      if (looksLikeFirebaseAuthEndpoint) {
         return fetch(request);
       }
 
-      // Network-first only for navigation + critical shell scripts/styles.
-      const isCriticalShell =
-        path === "/index.html" ||
+      const isStaticAsset =
+        path === "/style.css" ||
         path === "/script.js" ||
         path === "/firebaseConfig.js" ||
-        path === "/style.css" ||
         path === "/manifest.json" ||
-        path === "/icon.png";
+        path === "/privacy.html" ||
+        path === "/icon.png" ||
+        path === "/icon-192.png" ||
+        path === "/icon-512.png" ||
+        path.startsWith("/sounds/") ||
+        path.startsWith("/icons/") ||
+        accept.includes("text/css") ||
+        accept.includes("application/javascript") ||
+        accept.includes("image/") ||
+        path.endsWith(".png") ||
+        path.endsWith(".jpg") ||
+        path.endsWith(".jpeg") ||
+        path.endsWith(".svg") ||
+        path.endsWith(".mp3");
 
-      if (isCriticalShell) {
-        try {
-          const resp = await fetch(request);
-          if (resp && resp.ok) cache.put(path, resp.clone());
-          return resp;
-        } catch (e) {
-          const cached = await cache.match(path);
-          if (cached) return cached;
-          return Promise.reject(e);
-        }
+      if (!isStaticAsset) {
+        return fetch(request);
       }
 
-      // For remaining static assets, cache-first.
       const cached = await cache.match(path);
       if (cached) return cached;
 
       try {
         const resp = await fetch(request);
-        if (resp && resp.ok) cache.put(path, resp.clone());
+        if (resp && resp.ok) await cache.put(path, resp.clone());
         return resp;
       } catch (e) {
         return cached || Promise.reject(e);
@@ -227,3 +269,4 @@ self.addEventListener("message", (event) => {
 
   event.waitUntil(self.registration.showNotification(title, options));
 });
+

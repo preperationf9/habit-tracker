@@ -1,13 +1,23 @@
 
-
-
-
-
-
-
 // --- Firebase AUTH (COMPAT) — single-source architecture ---
 // NOTE: This block is the only Firebase/Auth implementation in this file.
 // Uses firebaseConfig from firebaseConfig.js and compat SDK globals.
+// Global auth helper (must be visible to the whole file)
+// Exposed early to avoid ReferenceError from UI handlers outside this IIFE.
+window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
+  try {
+    // Firebase compat auth factory
+    if (window.firebase && typeof window.firebase.auth === 'function') {
+      return window.firebase.auth();
+    }
+  } catch (err) {
+    try {
+      console.warn('[auth] Firebase Auth unavailable:', err);
+    } catch {}
+  }
+  return null;
+};
+
 (function firebaseAuthCompatArchitectureOnce() {
   'use strict';
 
@@ -4235,16 +4245,23 @@ function playAlarmAudio(url) {
         const badge = document.getElementById('authStateBadge');
         const badgeText = document.getElementById('authStateBadgeText');
         if (badge) {
-          const uid = localStorage.getItem('habitTracker.auth.uid');
+          const auth = window.getAuthOrNull && window.getAuthOrNull();
+          // If Firebase has a currentUser, always show email (never overwrite with Guest).
+          const fbUserEmail = auth && auth.currentUser && auth.currentUser.email ? auth.currentUser.email : null;
           badge.style.display = 'flex';
-          if (uid) {
-            badgeText && (badgeText.textContent = 'Signed in');
-            const dot = badge.querySelector('.auth-badge-dot');
+          const dot = badge.querySelector('.auth-badge-dot');
+          if (fbUserEmail) {
+            badgeText && (badgeText.textContent = fbUserEmail);
             if (dot) dot.style.background = 'rgba(34,197,94,.95)';
           } else {
-            badgeText && (badgeText.textContent = 'Guest');
-            const dot = badge.querySelector('.auth-badge-dot');
-            if (dot) dot.style.background = 'rgba(124,92,255,.95)';
+            const uid = localStorage.getItem('habitTracker.auth.uid');
+            if (uid) {
+              badgeText && (badgeText.textContent = localStorage.getItem('habitTracker.auth.email') || 'Signed in');
+              if (dot) dot.style.background = 'rgba(34,197,94,.95)';
+            } else {
+              badgeText && (badgeText.textContent = 'Guest');
+              if (dot) dot.style.background = 'rgba(124,92,255,.95)';
+            }
           }
         }
       } catch {}
@@ -4333,11 +4350,692 @@ function playAlarmAudio(url) {
       const closeBtn = document.getElementById('authOverlayCloseBtn');
 
       const googleBtn = document.getElementById('authGoogleBtn');
-      const phoneBtn = document.getElementById('authPhoneBtn');
       const guestBtn = document.getElementById('authGuestBtn');
+      const authEmailBtn = document.getElementById('authEmailBtn');
+      const authPasskeyBtn = document.getElementById('authPasskeyBtn');
       const enableCloudBtn = document.getElementById('authEnableCloudBtn');
 
+      // Email link + passkey UI (no habit/cloud logic changes)
+      const authPendingEmailKey = 'habitTracker.auth.pendingEmail';
+      const authPendingActionKey = 'habitTracker.auth.pendingAction';
+      const authPendingActionPasskeyKey = 'habitTracker.auth.pendingPasskey';
+
+      function setStatusIfPossible(msg) {
+        if (statusEl) statusEl.textContent = msg;
+      }
+
+      function setAuthInProgressUI() {
+        try {
+          if (authEmailBtn) authEmailBtn.disabled = true;
+          if (authPasskeyBtn) authPasskeyBtn.disabled = true;
+          if (googleBtn) googleBtn.disabled = true;
+          if (guestBtn) guestBtn.disabled = true;
+        } catch {}
+      }
+
+      function setAuthButtonsBack() {
+        try {
+          if (authEmailBtn) authEmailBtn.disabled = false;
+          if (authPasskeyBtn) authPasskeyBtn.disabled = false;
+          if (googleBtn) googleBtn.disabled = false;
+          if (guestBtn) guestBtn.disabled = false;
+        } catch {}
+      }
+
+      function setUidToLocal(uid, userEmail) {
+        try {
+          if (!uid) return;
+          localStorage.setItem('habitTracker.auth.uid', uid);
+          if (userEmail) localStorage.setItem('habitTracker.auth.email', userEmail);
+          // Keep decision so overlay won't re-open.
+          localStorage.setItem('habitTracker.auth.decided', 'true');
+        } catch {}
+      }
+
+      async function completeEmailLinkLoginIfNeeded() {
+        try {
+          const auth = getAuthOrNull();
+          if (!auth) return;
+          if (typeof auth.isSignInWithEmailLink !== 'function') return;
+
+          const href = window.location && typeof window.location.href === 'string' ? window.location.href : '';
+          if (!auth.isSignInWithEmailLink(href)) return;
+
+          // Contract: use only habitTracker.auth.pendingEmail
+          const pendingEmail = (() => {
+            try {
+              return localStorage.getItem(authPendingEmailKey);
+            } catch {
+              return null;
+            }
+          })();
+
+          if (!pendingEmail) {
+            setStatusIfPossible('Check your email for login link');
+            return;
+          }
+
+          setAuthInProgressUI();
+          setStatusIfPossible('Login successful');
+          await auth.signInWithEmailLink(pendingEmail, href);
+
+          const user = auth.currentUser;
+          if (user?.uid) {
+            setUidToLocal(user.uid, user.email);
+          }
+
+          // After success: remove pendingEmail, clean URL, update UI from Guest -> email
+          try {
+            localStorage.removeItem(authPendingEmailKey);
+            // Remove old keys if present
+            localStorage.removeItem(authPendingActionKey);
+            localStorage.removeItem(authPendingActionPasskeyKey);
+          } catch {}
+
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('oobCode');
+            url.searchParams.delete('mode');
+            window.history.replaceState({}, document.title, url.toString());
+          } catch {}
+
+          try {
+            const nameEl = document.getElementById('accountUserName');
+            const emailEl = document.getElementById('accountUserEmail');
+            const badgeTextEl = document.getElementById('authStateBadgeText');
+            if (user) {
+              if (nameEl) nameEl.textContent = user.displayName || 'Google User';
+              if (emailEl) emailEl.textContent = user.email || '';
+              if (badgeTextEl) badgeTextEl.textContent = 'Signed in';
+            }
+          } catch {}
+
+          closeAuthOverlay();
+          setAuthButtonsBack();
+        } catch (e) {
+          setStatusIfPossible('Check your email for login link');
+          setAuthButtonsBack();
+        }
+      }
+
+      // Run on every load if link is present (must happen before Guest badge/UI decisions)
+      // Also log for debugging email-link completion.
+      try {
+        console.log('[auth] checking email link on load');
+      } catch {}
+      void completeEmailLinkLoginIfNeeded();
+
+
+      // Email Link panel (in-overlay email form)
+      function getEmailPanelEl() {
+        return document.getElementById('emailLinkPanel');
+      }
+
+      function ensureEmailPanel() {
+        let panel = getEmailPanelEl();
+        if (panel) return panel;
+
+        const overlayBody = document.querySelector('#authOverlay .auth-overlay-body');
+        if (!overlayBody) return null;
+
+        panel = document.createElement('div');
+        panel.id = 'emailLinkPanel';
+        panel.className = 'email-link-panel';
+        panel.style.marginTop = '14px';
+        panel.style.display = 'none';
+        panel.setAttribute('role', 'group');
+
+        const label = document.createElement('div');
+        label.textContent = 'Email';
+        label.style.fontWeight = '900';
+        label.style.marginBottom = '8px';
+        label.style.color = 'rgba(232,238,252,.9)';
+
+        const input = document.createElement('input');
+        input.type = 'email';
+        input.id = 'emailLinkEmailInput';
+        input.placeholder = 'you@example.com';
+        input.autocomplete = 'email';
+        input.style.width = '100%';
+        input.style.padding = '12px 14px';
+        input.style.borderRadius = '14px';
+        input.style.border = '1px solid rgba(255,255,255,.08)';
+        input.style.background = 'rgba(255,255,255,.04)';
+        input.style.color = 'rgba(255,255,255,.95)';
+
+        const actions = document.createElement('div');
+        actions.style.display = 'flex';
+        actions.style.gap = '10px';
+        actions.style.marginTop = '12px';
+        actions.style.flexWrap = 'wrap';
+
+        const sendBtn = document.createElement('button');
+        sendBtn.type = 'button';
+        sendBtn.id = 'emailLinkSendBtn';
+        sendBtn.className = 'glow-btn';
+        sendBtn.textContent = 'Send Login Link';
+
+        const backBtn = document.createElement('button');
+        backBtn.type = 'button';
+        backBtn.id = 'emailLinkBackBtn';
+        backBtn.className = 'ghost-btn';
+        backBtn.textContent = 'Back';
+
+        actions.appendChild(sendBtn);
+        actions.appendChild(backBtn);
+
+        panel.appendChild(label);
+        panel.appendChild(input);
+        panel.appendChild(actions);
+
+        overlayBody.appendChild(panel);
+
+        return panel;
+      }
+
+      function showEmailPanel() {
+        const panel = ensureEmailPanel();
+        if (!panel) return;
+
+        // Hide auth actions while panel is visible (prevents duplicate submissions UI)
+        const actionsWrap = document.querySelector('#authOverlay .auth-actions');
+        if (actionsWrap) actionsWrap.style.display = 'none';
+
+        panel.style.display = 'block';
+        panel.setAttribute('aria-hidden', 'false');
+
+        const input = document.getElementById('emailLinkEmailInput');
+        if (input) {
+          try {
+            input.focus({ preventScroll: true });
+          } catch {
+            input.focus();
+          }
+        }
+      }
+
+      function hideEmailPanel() {
+        const panel = getEmailPanelEl();
+        if (!panel) return;
+        panel.style.display = 'none';
+        panel.setAttribute('aria-hidden', 'true');
+
+        const actionsWrap = document.querySelector('#authOverlay .auth-actions');
+        if (actionsWrap) actionsWrap.style.display = '';
+      }
+
+      // Route “Continue with Email” into the panel
+      authEmailBtn?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Always show panel first (UI must not “do nothing”)
+        const auth = getAuthOrNull();
+        if (!auth) {
+          setStatusIfPossible('Firebase auth not ready yet. Please try again.');
+          return;
+        }
+
+        setStatusIfPossible('Enter your email to receive login link.');
+        setAuthButtonsBack();
+        showEmailPanel();
+      });
+
+      // Email link system (delegated click; works even with dynamically created panel)
+
+      async function handleEmailLinkSend() {
+        console.log('[auth] handler started');
+        setStatusIfPossible('Sending login link...');
+
+        const auth = typeof window.getAuthOrNull === 'function' ? window.getAuthOrNull() : null;
+        if (!auth) {
+          setStatusIfPossible('Firebase Auth is not ready. Please reload and try again.');
+          return;
+        }
+
+        const inputEl = document.getElementById('emailLinkInput') || document.getElementById('emailLinkEmailInput');
+        const btnEl = document.getElementById('emailLinkSendBtn');
+        if (!inputEl) {
+          setStatusIfPossible('Please enter your email.');
+          return;
+        }
+
+        const email = String(inputEl.value || '').trim();
+        if (!email) {
+          setStatusIfPossible('Please enter your email.');
+          inputEl.focus?.();
+          return;
+        }
+        if (!email.includes('@')) {
+          setStatusIfPossible('Please enter a valid email.');
+          inputEl.focus?.();
+          return;
+        }
+
+        if (btnEl && btnEl.disabled) return;
+
+        // Prevent double click while sending
+        if (btnEl) btnEl.disabled = true;
+        try {
+          const actionCodeSettings = {
+            url: window.location.origin + window.location.pathname,
+            handleCodeInApp: true,
+          };
+
+          localStorage.setItem('habitTracker.auth.pendingEmail', email);
+
+          if (typeof auth.sendSignInLinkToEmail !== 'function') {
+
+            throw new Error('Email link auth is not available in this build.');
+          }
+
+          await auth.sendSignInLinkToEmail(email, actionCodeSettings);
+          setStatusIfPossible('Check your email for login link.');
+        } catch (err) {
+          const msg = err && err.message ? err.message : 'Could not send login link. Please try again.';
+          setStatusIfPossible(msg);
+        } finally {
+          if (btnEl) btnEl.disabled = false;
+        }
+      }
+
+      if (!window.__emailLinkDelegationInstalled) {
+        window.__emailLinkDelegationInstalled = true;
+
+        document.addEventListener('click', async (e) => {
+          const btn = e.target && e.target.closest ? e.target.closest('#emailLinkSendBtn') : null;
+          if (!btn) return;
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          console.log('[auth] send email link clicked');
+          await handleEmailLinkSend();
+        });
+      }
+
+      // Back button (still dynamic, but safe to bind directly once panel exists)
+      (function bindEmailPanelBackOnce() {
+        if (window.__EMAIL_LINK_BACK_BOUND__) return;
+        window.__EMAIL_LINK_BACK_BOUND__ = true;
+
+        const bindBack = () => {
+          const backBtn = document.getElementById('emailLinkBackBtn');
+          if (!backBtn) return false;
+          if (backBtn.__bound) return true;
+          backBtn.__bound = true;
+          backBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            setStatusIfPossible('');
+            hideEmailPanel();
+          });
+          return true;
+        };
+
+        queueMicrotask(bindBack);
+        const obs = new MutationObserver(() => {
+          bindBack();
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        setTimeout(() => obs.disconnect(), 5000);
+      })();
+
+      if (authPasskeyBtn && !window.__PASSKEY_REGISTER_BOUND__) {
+        window.__PASSKEY_REGISTER_BOUND__ = true;
+
+        authPasskeyBtn.addEventListener('click', async () => {
+          // Single-flight guard
+          if (window.__PASSKEY_REGISTER_IN_FLIGHT__) return;
+          window.__PASSKEY_REGISTER_IN_FLIGHT__ = true;
+
+          const emailPanel = document.getElementById('emailLinkPanel');
+          if (emailPanel) emailPanel.style.display = 'none';
+
+          const authStatus = document.getElementById('authStatus');
+          let currentStep = 'initial';
+          let succeeded = false;
+
+          const setStatus = (msg) => {
+            if (authStatus) authStatus.textContent = msg;
+          };
+
+          // fetch helper (15s timeout)
+          const fetchWithTimeout = async (url, opts, timeoutMs) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+            try {
+              const merged = { ...opts, signal: controller.signal };
+              const res = await fetch(url, merged);
+              return res;
+            } finally {
+              clearTimeout(timer);
+            }
+          };
+
+          try {
+            console.log('[passkey] click');
+
+            setStatus('Checking signed-in account...');
+            currentStep = 'firebase_user_ready';
+
+            if (!window.PublicKeyCredential) {
+              setStatus('Could not create the Passkey on this device.');
+              return;
+            }
+
+            const auth = window.getAuthOrNull && window.getAuthOrNull();
+            const user = auth && auth.currentUser;
+            console.log('[passkey] firebase user ready');
+
+            // SIGNED IN: preserve existing registration flow.
+            if (user) {
+              console.log('[passkey] token acquired');
+              const idToken = await user.getIdToken();
+
+              // STEP: register-options
+              console.log('[passkey] requesting options');
+              currentStep = 'register-options';
+              setStatus('Preparing Passkey registration...');
+
+              let optionsRes;
+              try {
+                optionsRes = await fetchWithTimeout(
+                  '/api/passkey/register-options',
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${idToken}`,
+                    },
+                    body: JSON.stringify({}),
+                  },
+                  15000,
+                );
+              } catch (err) {
+                if (authStatus) setStatus('Registration options request timed out. Please try again.');
+                return;
+              }
+
+              let optionsJson = null;
+              try {
+                optionsJson = await optionsRes.json();
+              } catch {}
+
+              if (!optionsRes.ok || !optionsJson?.ok) {
+                setStatus('Could not create registration options. Please try again.');
+                return;
+              }
+
+              console.log('[passkey] options received');
+
+              const { sessionId, options } = optionsJson;
+
+              // If excludeCredentials is non-empty, do not attempt another registration.
+              if (options && Array.isArray(options.excludeCredentials) && options.excludeCredentials.length > 0) {
+                setStatus('This account already has a Passkey. Please use Passkey Login after logging out.');
+                return;
+              }
+
+              if (typeof window.startRegistration !== 'function') {
+                setStatus('Could not create the Passkey on this device.');
+                return;
+              }
+
+              // STEP: startRegistration
+              console.log('[passkey] starting browser registration');
+              currentStep = 'startRegistration';
+              setStatus('Waiting for your device Passkey prompt...');
+
+              const registrationPromise = window.startRegistration(options);
+              let credential;
+
+              try {
+                credential = await Promise.race([
+                  registrationPromise,
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('PASSKEY_PROMPT_TIMEOUT')), 90000)),
+                ]);
+              } catch (err) {
+                const name = err && err.name ? String(err.name) : '';
+                const msg = err && err.message ? String(err.message) : '';
+
+                if (msg === 'PASSKEY_PROMPT_TIMEOUT') {
+                  setStatus('Passkey prompt timed out. Please try again.');
+                  return;
+                }
+
+                const cancelled =
+                  name === 'NotAllowedError' ||
+                  name === 'AbortError' ||
+                  /cancel|dismiss|user/i.test(msg) ||
+                  /notallowed/i.test(name);
+
+                setStatus(cancelled ? 'Passkey creation was cancelled.' : 'Could not create the Passkey on this device.');
+                return;
+              }
+
+              console.log('[passkey] browser credential received');
+
+              // STEP: register-verify
+              console.log('[passkey] sending verification');
+              currentStep = 'register-verify';
+              setStatus('Verifying Passkey...');
+
+              let verifyRes;
+              try {
+                verifyRes = await fetchWithTimeout(
+                  '/api/passkey/register-verify',
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${idToken}`,
+                    },
+                    body: JSON.stringify({
+                      sessionId,
+                      credential,
+                      deviceName: 'Habit Tracker',
+                    }),
+                  },
+                  15000,
+                );
+              } catch (err) {
+                setStatus('Passkey verification request timed out. Please try again.');
+                return;
+              }
+
+              console.log('[passkey] verification response received');
+
+              let verifyJson = null;
+              try {
+                verifyJson = await verifyRes.json();
+              } catch {}
+
+              if (!verifyRes.ok || !verifyJson?.ok) {
+                const code = verifyJson?.error ? String(verifyJson.error) : '';
+                if (code === 'CREDENTIAL_ALREADY_REGISTERED') {
+                  setStatus('This Passkey is already registered.');
+                  return;
+                }
+
+                setStatus('Passkey verification failed. Please try again.');
+                return;
+              }
+
+              console.log('[passkey] success');
+
+              // Success path: set final status exactly once and never override.
+              succeeded = true;
+              setStatus('Passkey registered successfully.');
+              closeAuthOverlay();
+              return;
+            }
+
+            // SIGNED OUT: passkey login flow.
+            setStatus('Preparing Passkey login...');
+            currentStep = 'login-options';
+
+            const passkeyAuthOptionsRes = await fetchWithTimeout(
+              '/api/passkey/auth-options',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({}),
+              },
+              15000,
+            ).catch(() => null);
+
+            if (!passkeyAuthOptionsRes || !passkeyAuthOptionsRes.ok) {
+              setStatus('Could not create authentication options. Please try again.');
+              return;
+            }
+
+            const passkeyAuthOptionsJson = await passkeyAuthOptionsRes.json().catch(() => null);
+            if (!passkeyAuthOptionsJson?.ok) {
+              setStatus('Could not create authentication options. Please try again.');
+              return;
+            }
+
+            const { sessionId, options } = passkeyAuthOptionsJson;
+
+            if (typeof window.startAuthentication !== 'function') {
+              setStatus('Could not create the Passkey on this device.');
+              return;
+            }
+
+            currentStep = 'startAuthentication';
+            setStatus('Waiting for your device Passkey prompt...');
+
+            const authenticationPromise = window.startAuthentication(options);
+            let loginCredential;
+
+            try {
+              loginCredential = await Promise.race([
+                authenticationPromise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('PASSKEY_PROMPT_TIMEOUT')), 90000)),
+              ]);
+            } catch (err) {
+              const name = err && err.name ? String(err.name) : '';
+              const msg = err && err.message ? String(err.message) : '';
+
+              if (msg === 'PASSKEY_PROMPT_TIMEOUT') {
+                setStatus('Passkey prompt timed out. Please try again.');
+                return;
+              }
+
+              const cancelled =
+                name === 'NotAllowedError' ||
+                name === 'AbortError' ||
+                /cancel|dismiss|user/i.test(msg) ||
+                /notallowed/i.test(name);
+
+              setStatus(cancelled ? 'Passkey login was cancelled.' : 'Could not authenticate with this Passkey.');
+              return;
+            }
+
+            currentStep = 'auth-verify';
+            setStatus('Verifying Passkey...');
+
+            const authVerifyRes = await fetchWithTimeout(
+              '/api/passkey/auth-verify',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  sessionId,
+                  credential: loginCredential,
+                }),
+              },
+              15000,
+            ).catch(() => null);
+
+            if (!authVerifyRes || !authVerifyRes.ok) {
+              setStatus('Passkey verification failed. Please try again.');
+              return;
+            }
+
+            const authVerifyJson = await authVerifyRes.json().catch(() => null);
+            if (!authVerifyJson?.ok || !authVerifyJson?.firebaseCustomToken) {
+              setStatus('Passkey verification failed. Please try again.');
+              return;
+            }
+
+            const firebaseCustomToken = authVerifyJson.firebaseCustomToken;
+
+            currentStep = 'signInWithCustomToken';
+            setStatus('Signing you in...');
+
+            const fbAuth = window.firebase && typeof window.firebase.auth === 'function' ? window.firebase.auth() : null;
+            if (!fbAuth || typeof fbAuth.signInWithCustomToken !== 'function') {
+              setStatus('Firebase auth not ready. Please try again.');
+              return;
+            }
+
+            await fbAuth.signInWithCustomToken(firebaseCustomToken);
+
+            succeeded = true;
+            setStatus('Signed in successfully.');
+            closeAuthOverlay();
+
+          } catch (error) {
+            if (succeeded) return;
+
+            console.error('[passkey] failed at step:', currentStep, {
+              name: error?.name,
+              message: error?.message,
+            });
+
+            const name = error && error.name ? String(error.name) : '';
+            const msg = error && error.message ? String(error.message) : '';
+
+            const cancelled =
+              name === 'NotAllowedError' ||
+              name === 'AbortError' ||
+              /cancel|dismiss|user/i.test(msg) ||
+              /notallowed/i.test(name);
+
+            if (cancelled) setStatus('Passkey flow was cancelled.');
+            else setStatus('Passkey verification failed. Please try again.');
+          } finally {
+            window.__PASSKEY_REGISTER_IN_FLIGHT__ = false;
+          }
+        });
+      }
+
+
+
+
+
       const statusEl = document.getElementById('authStatus');
+
+      // Route Account-screen auth buttons (Settings > Account) to the existing overlay auth actions.
+      // This keeps all auth implementation in one place (overlay logic near the bottom of this file).
+      try {
+        const accountEmailBtn = document.getElementById('accountEmailBtn');
+        const accountPasskeyBtn = document.getElementById('accountPasskeyBtn');
+        if (accountEmailBtn && authEmailBtn) {
+          accountEmailBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            openAuthOverlay();
+            authEmailBtn.click();
+          });
+        }
+        if (accountPasskeyBtn && authPasskeyBtn) {
+          accountPasskeyBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            openAuthOverlay();
+            authPasskeyBtn.click();
+          });
+        }
+      } catch {}
+
 
       function setStatus(msg) {
         if (statusEl) statusEl.textContent = msg;
@@ -4420,108 +5118,14 @@ function playAlarmAudio(url) {
       // (Intentionally removed: getFirebaseAuthSafe(), setAuthStatusIfUnavailable(),
       // and googleBtn click Firebase sign-in handler.)
 
-      // Keep phone/guest/cloud UI handlers below (UI-only, no auth execution).
-
-
-      const otpSection = document.getElementById('authOtpSection');
-      const phoneOtpStatusEl = document.getElementById('phoneOtpStatus');
-      function setOtpStatus(msg) {
-        if (phoneOtpStatusEl) phoneOtpStatusEl.textContent = msg;
-      }
-
-
-      phoneBtn?.addEventListener('click', () => {
-        // STEP 2B: show OTP section. No auth execution here.
-        setStatus('');
-        if (otpSection) {
-          otpSection.style.display = 'block';
-          otpSection.setAttribute('aria-hidden', 'false');
-        }
-        setOtpStatus('Enter phone number and OTP.');
-      });
-
-      // Phone OTP UI ONLY (no Firebase phone auth yet)
-      const sendOtpBtn = document.getElementById('sendOtpBtn');
-
-      const verifyOtpBtn = document.getElementById('verifyOtpBtn');
-      const phoneNumberInput = document.getElementById('phoneNumberInput');
-      const otpCodeInput = document.getElementById('otpCodeInput');
-
-      const sanitizePhone = (s) => (s || '').toString().trim();
-      const sanitizeOtp = (s) => (s || '').toString().replace(/\D/g, '');
-
-      // UI-only state: whether user pressed “Send OTP” successfully.
-      let otpUiSent = false;
-
-      // Basic UI validation: allow +, digits, spaces, dashes, parentheses.
-      const phoneAllowedRe = /^[+()\d\s-]+$/;
-
-      sendOtpBtn?.addEventListener('click', () => {
-        const phoneRaw = sanitizePhone(phoneNumberInput?.value);
-
-        if (!phoneRaw) {
-          setOtpStatus('Enter a phone number to send OTP.');
-          phoneNumberInput?.focus();
-          otpUiSent = false;
-          return;
-        }
-
-        if (!phoneAllowedRe.test(phoneRaw)) {
-          setOtpStatus('Phone number format looks invalid (UI test).');
-          phoneNumberInput?.focus();
-          otpUiSent = false;
-          return;
-        }
-
-        // UI-only: emulate OTP sent
-        otpUiSent = true;
-        setOtpStatus('OTP sent (UI test). Enter the 6-digit code to verify.');
-
-        // Enable verify button
-        if (verifyOtpBtn) verifyOtpBtn.disabled = false;
-        otpCodeInput?.focus();
-        setStatus('');
-      });
-
-      verifyOtpBtn?.addEventListener('click', () => {
-        if (!otpUiSent) {
-          setOtpStatus('Send OTP first.');
-          sendOtpBtn?.focus();
-          return;
-        }
-
-        const otp = sanitizeOtp(otpCodeInput?.value);
-
-        if (!otp) {
-          setOtpStatus('Enter the OTP code to verify.');
-          otpCodeInput?.focus();
-          return;
-        }
-
-        if (!/^\d{6}$/.test(otp)) {
-          setOtpStatus('OTP must be exactly 6 digits (UI test).');
-          otpCodeInput?.focus();
-          return;
-        }
-
-        // UI-only success (no auth)
-        setOtpStatus('OTP verified (UI test). No Firebase phone auth yet.');
-        setStatus('');
-
-        // Keep overlay open or close? Keep it simple: close like a “successful sign-in UI”.
-        // But do NOT set any uid/auth mode based on Firebase.
-        closeAuthOverlay();
-        renderAccountAuthUi();
-      });
-
-
-
+      // Keep guest/cloud UI handlers below (UI-only, no auth execution).
 
       guestBtn?.addEventListener('click', () => {
         // Guest continue: closes overlay only.
         setStatus('');
         closeAuthOverlay();
       });
+
 
 
 
