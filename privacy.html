@@ -6,15 +6,40 @@
   <title>Privacy Policy — Habit Tracker</title>
   <link rel="stylesheet" href="style.css" />
   <style>
+    .spatial-bg{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+    .spatial-orb{position:absolute;border-radius:50%;opacity:.5;filter:blur(70px)}
+    .spatial-orb--1{width:520px;height:520px;left:-120px;top:-80px;background:radial-gradient(circle, rgba(124,92,255,.5), transparent 70%)}
+    .spatial-orb--2{width:460px;height:460px;right:-100px;top:20%;background:radial-gradient(circle, rgba(56,189,248,.38), transparent 70%)}
+    .spatial-orb--3{width:620px;height:620px;left:18%;bottom:-230px;background:radial-gradient(circle, rgba(168,85,247,.34), transparent 70%)}
+    .spatial-vignette{position:absolute;inset:0;background:radial-gradient(120% 100% at 50% 0%, transparent 55%, rgba(2,4,12,.55) 100%)}
     .privacy-wrap{max-width:900px;margin:0 auto;padding:24px 16px;color:rgba(232,238,252,.92)}
     .privacy-wrap h1{margin:0 0 12px;font-size:28px}
     .privacy-wrap h2{margin:22px 0 8px;font-size:18px}
     .privacy-wrap p,.privacy-wrap li{line-height:1.55;font-size:14.5px}
-    .privacy-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);border-radius:16px;padding:18px 18px}
-    a{color:#93c5fd}
+    .privacy-card{
+      background:linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.028));
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:22px;
+      padding:18px 18px;
+      -webkit-backdrop-filter:blur(18px);
+      backdrop-filter:blur(18px);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.10), 0 12px 32px rgba(2,6,23,.45), 0 24px 60px -12px rgba(2,6,23,.50);
+    }
+    a{color:#8ab4ff;text-decoration:none}
+    a:hover{text-shadow:0 0 12px rgba(56,189,248,.4)}
+    body{min-height:100vh;margin:0;background:linear-gradient(180deg,#060b1c 0%,#050a18 45%,#040714 100%)}
+    *{max-width:100%}
   </style>
-</head>
+  </head>
 <body>
+  <!-- Spatial Glass 3D background layers (decorative only) -->
+  <div class="spatial-bg" aria-hidden="true">
+    <div class="spatial-orb spatial-orb--1"></div>
+    <div class="spatial-orb spatial-orb--2"></div>
+    <div class="spatial-orb spatial-orb--3"></div>
+    <div class="spatial-vignette"></div>
+  </div>
+
   <div class="app">
     <main class="main">
       <div class="privacy-wrap">

@@ -1,4 +1,3 @@
-
 // --- Firebase AUTH (COMPAT) — single-source architecture ---
 // NOTE: This block is the only Firebase/Auth implementation in this file.
 // Uses firebaseConfig from firebaseConfig.js and compat SDK globals.
@@ -176,8 +175,8 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
   }
 
 
-  // Ensure ready before controller wiring
-  const initOk = ensureFirebaseCompatInitialized();
+// Ensure ready before controller wiring
+  ensureFirebaseCompatInitialized();
 
   // Persistence is async; fire-and-forget so we don't block UI.
   // Important: call before sign-in to avoid inconsistent auth state.
@@ -262,6 +261,30 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
 
       auth.onAuthStateChanged((user) => {
         renderAuthUi(user ? STATES.SIGNED_IN : STATES.SIGNED_OUT);
+
+        // Close the auth overlay whenever the user is signed in.
+        if (user) {
+          try {
+            const overlay = document.getElementById('authOverlay');
+            if (overlay && overlay.classList.contains('is-open')) {
+              // Use the global close function to properly dismiss overlay
+              if (typeof window.closeAuthOverlay === 'function') {
+                window.closeAuthOverlay();
+              } else if (typeof closeAuthOverlay === 'function') {
+                closeAuthOverlay();
+              }
+            }
+            // Also persist uid/email so overlay doesn't reappear on refresh
+            if (!localStorage.getItem('habitTracker.auth.uid')) {
+              try {
+                localStorage.setItem('habitTracker.auth.uid', user.uid || '');
+                if (user.email) localStorage.setItem('habitTracker.auth.email', user.email);
+                if (user.displayName) localStorage.setItem('habitTracker.auth.displayName', user.displayName);
+                localStorage.setItem('habitTracker.auth.decided', 'true');
+              } catch {}
+            }
+          } catch {}
+        }
 
         // Update signed-in account UI text directly from Firebase user.
         // Required fields: displayName + email.
@@ -504,11 +527,7 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
       .filter(Boolean);
   }
 
-  function getXpLedgerKey(habitId, dateKey) {
-    return `${dateKey}:${habitId}`;
-  }
-
-  function ensureStateShape() {
+function ensureStateShape() {
     state = state || { habits: [] };
 
 
@@ -550,7 +569,6 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
     };
 
     state._dirtyViews = state._dirtyViews || { weekly: true, monthly: true, trash: true };
-    console.log('Final state', state);
   }
 
 
@@ -567,7 +585,7 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
         habitTrash: [],
         monthlyByMonthKey: {},
       alarmRuntime: { activeHabitId: null, activeAudio: null },
-        // Persisted per-habit STOP dismissal state for “today”
+        // Persisted per-habit STOP dismissal state for "today"
         // habitAlarmDismissals[habitId] = YYYY-MM-DD
         habitAlarmDismissals: {},
       },
@@ -737,9 +755,7 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
         state = getDefaultState();
         return;
       }
-      console.log('Loaded state', JSON.parse(raw));
       const parsed = JSON.parse(raw);
-      console.log('Migrated state', migrateAndMergeState(parsed));
       state = migrateAndMergeState(parsed);
 
       // Normalize persisted alarms on every load to enforce invariants:
@@ -765,9 +781,8 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       } catch (err) {
         try {
-          console.error('alarm scheduler tick error', {
+          console.error('[storage] failed to persist state after load', {
             message: err && err.message ? err.message : String(err),
-            stack: err && err.stack ? err.stack : null,
           });
         } catch {
           // ignore logging failures
@@ -803,14 +818,6 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
   // =============================
   // Streak logic (activity-date based)
   // =============================
-
-  function isAnyHabitDoneOnDate(dateKey) {
-    for (const habit of state.habits || []) {
-      if (habit?.history?.[dateKey] === 'done') return true;
-    }
-    return false;
-  }
-
 
   function activityDateHistorySync() {
     // IMPORTANT: streak must be based only on persisted activity dates,
@@ -883,37 +890,6 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
     return best;
   }
 
-
-  function computeStreakUpTo(dateKeyInclusive) {
-
-    let streak = 0;
-    for (let i = 0; i < 730; i++) {
-      const d = new Date(dateKeyInclusive + 'T00:00:00');
-      d.setDate(d.getDate() - i);
-      const k = todayKey(d);
-      if (isHabitDayComplete(k)) streak++;
-      else break;
-    }
-    return streak;
-  }
-
-  function computeBestStreak() {
-    if (!state.habits.length) return 0;
-    let best = 0;
-    let cur = 0;
-    for (let back = 729; back >= 0; back--) {
-      const d = new Date();
-      d.setDate(d.getDate() - back);
-      const k = todayKey(d);
-      if (isHabitDayComplete(k)) {
-        cur++;
-        best = Math.max(best, cur);
-      } else {
-        cur = 0;
-      }
-    }
-    return best;
-  }
 
   function resolveDailyStreakAndMissedDays(els) {
     ensureStateShape();
@@ -1025,6 +1001,39 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
 
   function renderDashboard(els) {
     if (!els.viewDashboard) return;
+
+    // Single global popover close handler (prevents per-render listener multiplication).
+    // Keeps: outside click closes the currently open bell popover; Escape closes it.
+    if (!window.__HT_BELL_POPOVER_GLOBAL_CLOSE_BOUND__) {
+      window.__HT_BELL_POPOVER_GLOBAL_CLOSE_BOUND__ = true;
+
+      document.addEventListener(
+        'pointerdown',
+        (ev) => {
+          const runtime = state?.meta?.alarmRuntime;
+          const openPop = runtime?._openBellPopoverEl;
+          if (!openPop) return;
+          const bellBtn = document.querySelector(`[data-action="toggleAlarmPopover"][data-habit-id="${openPop.dataset.habitId}"]`);
+          const t = ev.target;
+          if (openPop.contains(t) || (bellBtn && bellBtn.contains(t))) return;
+
+          // close
+          if (runtime) runtime._openBellPopoverEl = null;
+          openPop.style.display = 'none';
+        },
+        { passive: true }
+      );
+
+      document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Escape') return;
+        const runtime = state?.meta?.alarmRuntime;
+        const openPop = runtime?._openBellPopoverEl;
+        if (!openPop) return;
+        if (runtime) runtime._openBellPopoverEl = null;
+        openPop.style.display = 'none';
+      });
+    }
+
     if (typeof renderAnalytics === 'function') renderAnalytics(els);
 
 
@@ -1360,23 +1369,9 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
           showBellPopover();
         });
 
-        // Outside/ESC close
-        const outsideClose = (ev) => {
-          const target = ev.target;
-          if (pop.contains(target) || bellBtn.contains(target)) return;
-          hideBellPopover();
-        };
-
-        const escClose = (ev) => {
-          if (ev.key !== 'Escape') return;
-          hideBellPopover();
-        };
-
         // Attach only once per popover lifetime; store marker on pop element
         if (!pop.__outsideCloseBound) {
           pop.__outsideCloseBound = true;
-          document.addEventListener('pointerdown', outsideClose, { passive: true });
-          document.addEventListener('keydown', escClose);
         }
 
         actionsRight.appendChild(bellBtn);
@@ -1504,7 +1499,7 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
 
     const totalHabitCount = habits.length;
 
-    // “Missed” (yellow): for analytics cards, missed means *today* has no explicit status.
+    // "Missed" (yellow): for analytics cards, missed means *today* has no explicit status.
     const totalMissed = Math.max(0, totalHabitCount - (totalDone + totalNotDone));
 
     // Weekly chart missed bars keep the existing semantics (only compute if day has explicit activity)
@@ -1537,12 +1532,6 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
   }
 
 
-  function refreshDashboardAnalyticsIfVisible(els) {
-    // Ensure no cached/stale analytics: always recompute.
-    if (!els || els.currentView !== 'dashboard') return;
-    renderAnalytics(els);
-  }
-
   function renderAnalytics(els) {
     if (
       !els.analyticsTotalCompletedEl ||
@@ -1558,10 +1547,10 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
     const data = computeActiveHabitsAnalytics();
 
     els.analyticsTotalCompletedEl.textContent = String(data.totalDone);
-    // Your “Missed habits” metric should count only the yellow “no explicit status” category.
+    // Your "Missed habits" metric should count only the yellow "no explicit status" category.
     els.analyticsMissedHabitsEl.textContent = String(data.totalMissed);
-    // “Not completed” should be explicit not_done across the week.
-    // Keep “Not completed” aligned with explicit not_done across the week.
+    // "Not completed" should be explicit not_done across the week.
+    // Keep "Not completed" aligned with explicit not_done across the week.
     if (els.analyticsNotCompletedHabitsEl) els.analyticsNotCompletedHabitsEl.textContent = String(data.totalNotDone);
 
 
@@ -1721,16 +1710,6 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
       date.setDate(monday.getDate() + i);
       weekKeys.push(formatLocalDateKey(date));
     }
-
-    // Temporary console check (remove after confirming bugfix)
-    console.log(
-      'todayKey',
-      todayKeyForAnalytics,
-      'todayIndex',
-      (parseLocalDateKey(todayKeyForAnalytics).getDay() + 6) % 7,
-      'weekKeys',
-      weekKeys
-    );
 
     // Build week buckets (by index only)
     const weekly = [
@@ -2242,26 +2221,6 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
     load();
     ensureStateShape();
 
-    // If the habit was marked done today, remove its awarded XP before deleting.
-    const tKey = todayKey();
-    if (state.habits?.length) {
-      const habitInLiveList = state.habits.find((h) => h.id === habitId);
-      // If habit is already in trash (not in live list), it won't be found here.
-      // In that case, check the snapshot inside habitTrash below.
-      // XP derived from habit history; deleting will automatically remove today's XP.
-      void habitInLiveList;
-      void tKey;
-
-    }
-
-    // Also handle the common case: habit is already removed from state.habits
-    // and only exists as a trash snapshot.
-    void tKey;
-    // XP derived from habit history; no ledger updates needed when deleting.
-    void habitId;
-
-
-
     state.meta.habitTrash = (state.meta.habitTrash || []).filter((t) => t.habit?.id !== habitId);
     save();
     state._dirtyViews.trash = true;
@@ -2365,6 +2324,15 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
   // debug flag (keep false in prod; set true to trace alarm reliability)
   const ALARM_DEBUG = false;
 
+  // Gate noisy alarm diagnostics behind ALARM_DEBUG so the production
+  // console stays clean (no per-tick / per-habit spam).
+  function alarmLog() {
+    if (!ALARM_DEBUG) return;
+    try {
+      Function.prototype.apply.call(console.log, console, arguments);
+    } catch {}
+  }
+
   // Audio unlock attempt window
   const ALARM_AUDIO_PRELOAD_TRY_MS = 1200;
 
@@ -2436,7 +2404,7 @@ window.getAuthOrNull = window.getAuthOrNull || function getAuthOrNull() {
       if (runtime) runtime._activeAudio = null;
 
       try {
-        console.log('[audio-stop-complete]');
+        alarmLog('[audio-stop-complete]');
       } catch {}
     } catch {}
   }
@@ -2668,7 +2636,7 @@ function playAlarmAudio(url) {
     } catch {}
 
     try {
-      console.log('[modal-close]');
+      alarmLog('[modal-close]');
     } catch {}
   }
 
@@ -2681,12 +2649,12 @@ function playAlarmAudio(url) {
     const activeHabitId = runtime?.activeHabitId;
 
     try {
-      console.log('[modal-stop]');
+      alarmLog('[modal-stop]');
     } catch {}
 
     // Stop sound immediately (before/while closing).
     stopAlarmSound();
-    console.log('[audio-stop]');
+    alarmLog('[audio-stop]');
 
     closeAlarmModal(els);
 
@@ -2726,7 +2694,7 @@ function playAlarmAudio(url) {
 
 
       try {
-        console.log('[alarm-dismissed]', { habitId: activeHabitId, dismissalKey });
+        alarmLog('[alarm-dismissed]', { habitId: activeHabitId, dismissalKey });
       } catch {}
 
       try {
@@ -2798,25 +2766,21 @@ function playAlarmAudio(url) {
     if (habitId && state?.meta?.habitTrash && Array.isArray(state.meta.habitTrash)) {
       const isTrashed = state.meta.habitTrash.some((t) => t?.habit?.id === habitId);
       if (isTrashed) {
-        console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'deleted/trashed' });
         return false;
       }
     }
 
     if (!enabled) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'alarmEnabled false' });
       return false;
     }
 
     if (!alarmTime) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'missing alarmTime' });
       return false;
     }
 
     // Validate HH:MM format early
     const alarmTimeStr = String(alarmTime);
     if (!/^\d{2}:\d{2}$/.test(alarmTimeStr)) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'invalid alarmTime format', alarmTime: alarmTimeStr });
       return false;
     }
 
@@ -2826,24 +2790,16 @@ function playAlarmAudio(url) {
     const expectedDismissalKey = `${tKey}:${alarmTimeStr}`;
     const storedDismissal = habitId && dismissals ? dismissals[habitId] : undefined;
 
-    console.log('[alarm][dismissal-check]', {
-      habitId,
-      storedDismissal,
-      expectedDismissalKey,
-      alarmTime: alarmTimeStr,
-    });
-
     if (habitId && dismissals && storedDismissal === expectedDismissalKey) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'stop-dismissal for this occurrence' });
       return false;
     }
 
 
     // never trigger while modal is open
     if (state?.meta?.alarmRuntime?._modalOpen) {
-      console.log('[alarm][shouldTriggerAlarm-false]', { habitId, reason: 'modalOpen' });
       return false;
     }
+
 
     // Weekday gating (Specific Days)
     const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -2854,25 +2810,12 @@ function playAlarmAudio(url) {
 
     const todayName = weekdayNameForDate(now);
     if (!selected.includes(todayName)) {
-      console.log('[alarm][shouldTriggerAlarm-false]', {
-        habitId,
-        reason: 'selectedDays/specificDays mismatch',
-        todayName,
-        selected,
-      });
       return false;
     }
 
-    // NOTE: scheduler tick handles time-match + grace/catch-up.
-    // shouldTriggerAlarm must ONLY decide whether firing is allowed.
-    console.log('[alarm][shouldTriggerAlarm-true]', {
-      habitId,
-      alarmTime: alarmTimeStr,
-      currentHHMM: hhmmNow(now),
-      today: tKey,
-    });
     return true;
   }
+
 
 
 
@@ -2921,7 +2864,7 @@ function playAlarmAudio(url) {
       if (!shouldTriggerAlarm(habit, now)) continue;
 
       // STOP blocks NORMAL reminder for this habit today ONLY if it matches an exact occurrence key.
-      // We keep legacy “day-only” formats from blocking reschedules.
+      // We keep legacy "day-only" formats from blocking reschedules.
       if (dismissedMap && typeof dismissedMap[habit.id] === 'string') {
         if (dismissedMap[habit.id] === dayKey || dismissedMap[habit.id] === `${dayKey}:${habit.alarmTime}`) {
           const stored = dismissedMap[habit.id];
@@ -2957,7 +2900,7 @@ function playAlarmAudio(url) {
       const occurrenceSeen = state?.meta?.alarmRuntime?._occurrenceSeen || {};
       state.meta.alarmRuntime._occurrenceSeen = occurrenceSeen;
 
-      console.log('[alarm-time] triggerDueAlarms-enter-ms', {
+      alarmLog('[alarm-time] triggerDueAlarms-enter-ms', {
         nowMs: now.getTime(),
         reason,
         dayKey,
@@ -2981,7 +2924,7 @@ function playAlarmAudio(url) {
               occurrenceSeen[key] = true;
               state.meta.alarmRuntime._occurrenceSeen = occurrenceSeen;
 
-              console.log('[alarm-time] trigger', { habitId: habit.id, alarmTime: alarmTimeHHMM, reason, delayMs: now.getTime() - override.triggerAtMs });
+              alarmLog('[alarm-time] trigger', { habitId: habit.id, alarmTime: alarmTimeHHMM, reason, delayMs: now.getTime() - override.triggerAtMs });
 
               state.meta.alarmRuntime._modalOpen = true;
               state.meta.alarmRuntime.activeHabitId = habit.id;
@@ -3006,7 +2949,7 @@ function playAlarmAudio(url) {
         if (!habit?.id) continue;
         if (!habit?.alarmTime) continue;
         // (required trace)
-        console.log('[alarm-check]', {
+        alarmLog('[alarm-check]', {
           habitName: habit.name,
           habitId: habit.id,
           alarmTime: habit.alarmTime,
@@ -3015,7 +2958,7 @@ function playAlarmAudio(url) {
         });
 
         if (!shouldTriggerAlarm(habit, now)) {
-          console.log('[alarm-skip]', { habitId: habit.id, reason: 'shouldTriggerAlarm-false' });
+          alarmLog('[alarm-skip]', { habitId: habit.id, reason: 'shouldTriggerAlarm-false' });
           continue;
         }
 
@@ -3023,7 +2966,7 @@ function playAlarmAudio(url) {
         // (Note: this uses exact HH:MM key we store on STOP.)
         const dismissalKey = `${dayKey}:${habit.alarmTime}`;
         if (dismissedMap && dismissedMap[habit.id] === dismissalKey) {
-          console.log('[alarm-skip]', {
+          alarmLog('[alarm-skip]', {
             habitId: habit.id,
             reason: 'stopped-exact-time',
             dayKey,
@@ -3034,7 +2977,7 @@ function playAlarmAudio(url) {
 
         const scheduledMs = getHabitScheduledLocalMs(habit, now);
         if (scheduledMs == null) {
-          console.log('[alarm-skip]', { habitId: habit.id, reason: 'invalid-alarmTime-format' });
+          alarmLog('[alarm-skip]', { habitId: habit.id, reason: 'invalid-alarmTime-format' });
           continue;
         }
 
@@ -3047,14 +2990,14 @@ function playAlarmAudio(url) {
 
         const key = getAlarmOccurrenceKey({ habitId: habit.id, dayKey, alarmTimeHHMM: habit.alarmTime, occurrenceType: 'normal' });
         if (occurrenceSeen[key]) {
-          console.log('[alarm-time] skipped', { habitId: habit.id, reason: 'dedupe' });
+          alarmLog('[alarm-time] skipped', { habitId: habit.id, reason: 'dedupe' });
           continue;
         }
 
         occurrenceSeen[key] = true;
         state.meta.alarmRuntime._occurrenceSeen = occurrenceSeen;
 
-        console.log('[alarm-time] trigger', { habitId: habit.id, alarmTime: habit.alarmTime, reason, delayMs: lateMs });
+        alarmLog('[alarm-time] trigger', { habitId: habit.id, alarmTime: habit.alarmTime, reason, delayMs: lateMs });
 
         state.meta.alarmRuntime._modalOpen = true;
         state.meta.alarmRuntime.activeHabitId = habit.id;
@@ -3104,7 +3047,7 @@ function playAlarmAudio(url) {
       const override = state?.meta?.alarmRuntime?._snoozeOverride;
       if (override && typeof override.triggerAtMs === 'number') {
         const delayMs = Math.max(0, override.triggerAtMs - Date.now());
-        console.log('[alarm-time] next exact scheduled', { habitId: override.habitId, alarmTime: override.hhmm, scheduledAt: new Date(override.triggerAtMs).toISOString(), delayMs, reason: 'snooze' });
+        alarmLog('[alarm-time] next exact scheduled', { habitId: override.habitId, alarmTime: override.hhmm, scheduledAt: new Date(override.triggerAtMs).toISOString(), delayMs, reason: 'snooze' });
         alarmExactTimeoutHandle = setTimeout(() => {
           triggerDueAlarms(new Date(), 'exact-timeout', els);
           scheduleNextExactAlarm(els);
@@ -3118,7 +3061,7 @@ function playAlarmAudio(url) {
       const { habit, scheduledMs } = next;
       const delayMs = Math.max(0, scheduledMs - Date.now());
 
-      console.log('[alarm-time] next exact scheduled', {
+      alarmLog('[alarm-time] next exact scheduled', {
         habitId: habit.id,
         alarmTime: habit.alarmTime,
         scheduledAt: new Date(scheduledMs).toISOString(),
@@ -3129,7 +3072,7 @@ function playAlarmAudio(url) {
       alarmExactTimeoutHandle = setTimeout(() => {
         const firedAt = new Date();
         const actualDelay = firedAt.getTime() - scheduledMs;
-        console.log('[alarm-time] timeout-fired-ms', { habitId: habit.id, alarmTime: habit.alarmTime, scheduledMs, timeoutDelayMs: actualDelay, timeoutFiredAtMs: firedAt.getTime() });
+        alarmLog('[alarm-time] timeout-fired-ms', { habitId: habit.id, alarmTime: habit.alarmTime, scheduledMs, timeoutDelayMs: actualDelay, timeoutFiredAtMs: firedAt.getTime() });
 
         triggerDueAlarms(firedAt, 'exact-timeout', els);
         scheduleNextExactAlarm(els);
@@ -3142,13 +3085,13 @@ function playAlarmAudio(url) {
   function startAlarmScheduler(els) {
     if (alarmTimerHandle) return;
 
-    console.log('[alarm-init]');
+    alarmLog('[alarm-init]');
 
     // initialize runtime flags
     ensureStateShape();
     state.meta.alarmRuntime._modalOpen = false;
 
-    console.log('[alarm-scheduler-started]');
+    alarmLog('[alarm-scheduler-started]');
 
 
     state.meta.alarmRuntime._lastFiredMinute = state.meta.alarmRuntime._lastFiredMinute || {}; // habitId -> 'YYYY-MM-DD:HH:MM'
@@ -3209,7 +3152,7 @@ function playAlarmAudio(url) {
             state.meta.alarmRuntime._modalOpen = true;
             state.meta.habitAlarmLastDue[habit.id] = tNowDayKey;
 
-            console.log('[alarm] recovered missed alarm', {
+            alarmLog('[alarm] recovered missed alarm', {
               habitId: habit.id,
               habitName: habit.name,
               lateMs,
@@ -3248,7 +3191,7 @@ function playAlarmAudio(url) {
 
     const tick = () => {
       try {
-        console.log('[alarm-tick]', new Date().toISOString());
+        alarmLog('[alarm-tick]', new Date().toISOString());
         // heartbeat (throttle logging)
         const now = new Date();
         const nowMs = now.getTime();
@@ -3265,7 +3208,7 @@ function playAlarmAudio(url) {
           const shouldNow = nowMs >= override.triggerAtMs;
           if (shouldNow) {
             const habit = state.habits.find((h) => h.id === override.habitId);
-            console.log('[alarm] snooze scan', {
+            alarmLog('[alarm] snooze scan', {
               habitId: override.habitId,
               nowMs,
               triggerAtMs: override.triggerAtMs,
@@ -3282,7 +3225,7 @@ function playAlarmAudio(url) {
                 state.meta.alarmRuntime.activeHabitId = habit.id;
 
                 state.meta.alarmRuntime._modalOpen = true;
-                console.log('[alarm] triggered (snooze)', { habitName: habit.name });
+                alarmLog('[alarm] triggered (snooze)', { habitName: habit.name });
                 stopAlarmAudio();
                 playAlarmAudio(alarmSoundUrlForHabit(habit));
                 openAlarmModal(els, habit);
@@ -3291,10 +3234,10 @@ function playAlarmAudio(url) {
                 override._used = true;
                 state.meta.alarmRuntime._snoozeOverride = null;
               } else {
-                console.log('[alarm] snooze skipped (already fired today)');
+                alarmLog('[alarm] snooze skipped (already fired today)');
               }
             } else {
-              console.log('[alarm] snooze skipped (shouldTriggerAlarm false or habit missing)');
+              alarmLog('[alarm] snooze skipped (shouldTriggerAlarm false or habit missing)');
             }
           }
           return;
@@ -3319,7 +3262,7 @@ function playAlarmAudio(url) {
           const dismissedToday = dismissals && dismissals[habitId] === dismissalKey;
 
 
-          console.log('[alarm] scan habit', {
+          alarmLog('[alarm] scan habit', {
             habitId,
             habitName: habit.name,
             nowIso: now.toISOString(),
@@ -3327,12 +3270,12 @@ function playAlarmAudio(url) {
           });
 
           if (dismissedToday) {
-            console.log('[alarm] skipped (dismissed today)');
+            alarmLog('[alarm] skipped (dismissed today)');
             continue;
           }
 
           if (!shouldTriggerAlarm(habit, now)) {
-            console.log('[alarm] skipped (shouldTriggerAlarm false)');
+            alarmLog('[alarm] skipped (shouldTriggerAlarm false)');
             continue;
           }
 
@@ -3340,7 +3283,7 @@ function playAlarmAudio(url) {
           const hh = Number(hhStr);
           const mm = Number(mmStr);
           if (!Number.isFinite(hh) || !Number.isFinite(mm)) {
-            console.log('[alarm] skipped (invalid alarmTime)', { alarmTime: habit.alarmTime });
+            alarmLog('[alarm] skipped (invalid alarmTime)', { alarmTime: habit.alarmTime });
             continue;
           }
 
@@ -3356,11 +3299,11 @@ function playAlarmAudio(url) {
           const isNotTooLate = nowMs - scheduledMs <= graceMs;
 
           if (!isDue) {
-            console.log('[alarm] skipped (not due yet)', { timeUntilMs: timeUntil });
+            alarmLog('[alarm] skipped (not due yet)', { timeUntilMs: timeUntil });
             continue;
           }
           if (!isNotTooLate) {
-            console.log('[alarm] skipped (too late beyond grace)', { lateMs: nowMs - scheduledMs });
+            alarmLog('[alarm] skipped (too late beyond grace)', { lateMs: nowMs - scheduledMs });
             continue;
           }
 
@@ -3371,7 +3314,7 @@ function playAlarmAudio(url) {
           // Prevent firing right after add: require at least 60s elapsed since creation.
           const createdAt = safeNumber(habit.createdAt, 0);
           if (createdAt && nowMs - createdAt < 60 * 1000) {
-            console.log('[alarm] skipped (just created)');
+            alarmLog('[alarm] skipped (just created)');
             continue;
           }
 
@@ -3382,7 +3325,7 @@ function playAlarmAudio(url) {
           state.meta.alarmRuntime.activeHabitId = habitId;
 
           state.meta.alarmRuntime._modalOpen = true;
-          console.log('[alarm] triggered', {
+          alarmLog('[alarm] triggered', {
             habitName: habit.name,
             scheduledIso: scheduled.toISOString(),
             firedAtIso: now.toISOString(),
@@ -3532,40 +3475,13 @@ function playAlarmAudio(url) {
     return state.meta.monthlyByMonthKey[monthKey];
   }
 
-  function getStatusForMonth(habitId, dateKey) {
-    const habit = state.habits.find((h) => h.id === habitId);
-    return habit?.history?.[dateKey];
-  }
-
-  function setStatusForMonth(habitId, dateKey, status) {
+  function setStatusForMonthUI(habitId, dateKey, status) {
     const habit = state.habits.find((h) => h.id === habitId);
     if (!habit) return;
     habit.history = habit.history || {};
     const previous = habit.history[dateKey];
     habit.history[dateKey] = status;
-    syncXpForStatusChange(habitId, dateKey, previous, status);
     save();
-  }
-
-  function setStatusForMonthUI(habitId, dateKey, status) {
-    setStatusForMonth(habitId, dateKey, status);
-  }
-
-  // =============================
-  // XP / Levels helpers (non-alarm)
-  // =============================
-
-  // Legacy ledger-based XP functions (kept as no-ops to avoid runtime errors).
-  function ensureXpLedgerEntry() {}
-  function recomputeXpTotalFromLedger() {}
-  function syncXpForStatusChange() {}
-  function removeXpForStatus() {}
-
-
-
-  function resolveLevelUiFromXp(els) {
-    // renderXpUi already updates both XP bar and level badge
-    renderXpUi(els);
   }
 
   // =============================
@@ -3656,6 +3572,18 @@ function playAlarmAudio(url) {
       save();
       showView('dashboard', els);
       renderDashboard(els);
+    });
+
+    // Settings > "Continue as Guest": switch to guest mode and close any auth UI.
+    els.accountGuestBtn?.addEventListener('click', () => {
+      try {
+        localStorage.setItem('habitTracker.auth.mode', 'guest');
+      } catch {}
+      try {
+        const overlay = document.getElementById('authOverlay');
+        if (overlay && overlay.classList.contains('is-open')) closeAuthOverlay();
+      } catch {}
+      if (typeof renderAccountAuthUi === 'function') renderAccountAuthUi();
     });
 
     // Add habit submit
@@ -4145,6 +4073,9 @@ function playAlarmAudio(url) {
 
       clearAllBtn: $('clearAllBtn'),
 
+      accountGuestBtn: $('accountGuestBtn'),
+      accountGoogleOverlayBtn: $('accountGoogleOverlayBtn'),
+
       habitModal: $('habitModal'),
       habitForm: $('habitForm'),
       habitNameInput: $('habitNameInput'),
@@ -4277,22 +4208,25 @@ function playAlarmAudio(url) {
 
     // Midnight rollover re-render so the weekly chart updates without refresh.
     // Does not modify any completion/streak/history logic; only triggers re-render.
-    let lastDayKey = todayKey();
-    setInterval(() => {
-      const cur = todayKey();
-      if (cur !== lastDayKey) {
-        lastDayKey = cur;
-        // Re-render current view (analytics is on dashboard).
-        if (els.currentView === 'dashboard') {
-          renderDashboard(els);
-          renderXpUi(els);
-        } else if (els.currentView === 'weekly') {
-          renderWeekly(els);
-        } else if (els.currentView === 'monthly') {
-          renderMonthly(els);
+    // Ensure exactly one midnight rollover interval (prevents duplicate intervals on re-init).
+    if (!window.__HT_MIDNIGHT_ROLLOVER_INTERVAL_HANDLE__) {
+      let lastDayKey = todayKey();
+      window.__HT_MIDNIGHT_ROLLOVER_INTERVAL_HANDLE__ = setInterval(() => {
+        const cur = todayKey();
+        if (cur !== lastDayKey) {
+          lastDayKey = cur;
+          // Re-render current view (analytics is on dashboard).
+          if (els.currentView === 'dashboard') {
+            renderDashboard(els);
+            renderXpUi(els);
+          } else if (els.currentView === 'weekly') {
+            renderWeekly(els);
+          } else if (els.currentView === 'monthly') {
+            renderMonthly(els);
+          }
         }
-      }
-    }, 30000);
+      }, 30000);
+    }
 
     startAlarmScheduler(els);
   }
@@ -4337,8 +4271,6 @@ function playAlarmAudio(url) {
       }
     } catch {}
 
-    // Phase 3 Step 1 removed: Firebase initialization is handled exactly once at the top of this file (compat).
-
     // Overlay controller wiring (UI-only placeholders; no Firebase yet).
 
     // This must never alter habit/analytics/alarm/offline logic.
@@ -4351,691 +4283,9 @@ function playAlarmAudio(url) {
 
       const googleBtn = document.getElementById('authGoogleBtn');
       const guestBtn = document.getElementById('authGuestBtn');
-      const authEmailBtn = document.getElementById('authEmailBtn');
-      const authPasskeyBtn = document.getElementById('authPasskeyBtn');
       const enableCloudBtn = document.getElementById('authEnableCloudBtn');
 
-      // Email link + passkey UI (no habit/cloud logic changes)
-      const authPendingEmailKey = 'habitTracker.auth.pendingEmail';
-      const authPendingActionKey = 'habitTracker.auth.pendingAction';
-      const authPendingActionPasskeyKey = 'habitTracker.auth.pendingPasskey';
-
-      function setStatusIfPossible(msg) {
-        if (statusEl) statusEl.textContent = msg;
-      }
-
-      function setAuthInProgressUI() {
-        try {
-          if (authEmailBtn) authEmailBtn.disabled = true;
-          if (authPasskeyBtn) authPasskeyBtn.disabled = true;
-          if (googleBtn) googleBtn.disabled = true;
-          if (guestBtn) guestBtn.disabled = true;
-        } catch {}
-      }
-
-      function setAuthButtonsBack() {
-        try {
-          if (authEmailBtn) authEmailBtn.disabled = false;
-          if (authPasskeyBtn) authPasskeyBtn.disabled = false;
-          if (googleBtn) googleBtn.disabled = false;
-          if (guestBtn) guestBtn.disabled = false;
-        } catch {}
-      }
-
-      function setUidToLocal(uid, userEmail) {
-        try {
-          if (!uid) return;
-          localStorage.setItem('habitTracker.auth.uid', uid);
-          if (userEmail) localStorage.setItem('habitTracker.auth.email', userEmail);
-          // Keep decision so overlay won't re-open.
-          localStorage.setItem('habitTracker.auth.decided', 'true');
-        } catch {}
-      }
-
-      async function completeEmailLinkLoginIfNeeded() {
-        try {
-          const auth = getAuthOrNull();
-          if (!auth) return;
-          if (typeof auth.isSignInWithEmailLink !== 'function') return;
-
-          const href = window.location && typeof window.location.href === 'string' ? window.location.href : '';
-          if (!auth.isSignInWithEmailLink(href)) return;
-
-          // Contract: use only habitTracker.auth.pendingEmail
-          const pendingEmail = (() => {
-            try {
-              return localStorage.getItem(authPendingEmailKey);
-            } catch {
-              return null;
-            }
-          })();
-
-          if (!pendingEmail) {
-            setStatusIfPossible('Check your email for login link');
-            return;
-          }
-
-          setAuthInProgressUI();
-          setStatusIfPossible('Login successful');
-          await auth.signInWithEmailLink(pendingEmail, href);
-
-          const user = auth.currentUser;
-          if (user?.uid) {
-            setUidToLocal(user.uid, user.email);
-          }
-
-          // After success: remove pendingEmail, clean URL, update UI from Guest -> email
-          try {
-            localStorage.removeItem(authPendingEmailKey);
-            // Remove old keys if present
-            localStorage.removeItem(authPendingActionKey);
-            localStorage.removeItem(authPendingActionPasskeyKey);
-          } catch {}
-
-          try {
-            const url = new URL(window.location.href);
-            url.searchParams.delete('oobCode');
-            url.searchParams.delete('mode');
-            window.history.replaceState({}, document.title, url.toString());
-          } catch {}
-
-          try {
-            const nameEl = document.getElementById('accountUserName');
-            const emailEl = document.getElementById('accountUserEmail');
-            const badgeTextEl = document.getElementById('authStateBadgeText');
-            if (user) {
-              if (nameEl) nameEl.textContent = user.displayName || 'Google User';
-              if (emailEl) emailEl.textContent = user.email || '';
-              if (badgeTextEl) badgeTextEl.textContent = 'Signed in';
-            }
-          } catch {}
-
-          closeAuthOverlay();
-          setAuthButtonsBack();
-        } catch (e) {
-          setStatusIfPossible('Check your email for login link');
-          setAuthButtonsBack();
-        }
-      }
-
-      // Run on every load if link is present (must happen before Guest badge/UI decisions)
-      // Also log for debugging email-link completion.
-      try {
-        console.log('[auth] checking email link on load');
-      } catch {}
-      void completeEmailLinkLoginIfNeeded();
-
-
-      // Email Link panel (in-overlay email form)
-      function getEmailPanelEl() {
-        return document.getElementById('emailLinkPanel');
-      }
-
-      function ensureEmailPanel() {
-        let panel = getEmailPanelEl();
-        if (panel) return panel;
-
-        const overlayBody = document.querySelector('#authOverlay .auth-overlay-body');
-        if (!overlayBody) return null;
-
-        panel = document.createElement('div');
-        panel.id = 'emailLinkPanel';
-        panel.className = 'email-link-panel';
-        panel.style.marginTop = '14px';
-        panel.style.display = 'none';
-        panel.setAttribute('role', 'group');
-
-        const label = document.createElement('div');
-        label.textContent = 'Email';
-        label.style.fontWeight = '900';
-        label.style.marginBottom = '8px';
-        label.style.color = 'rgba(232,238,252,.9)';
-
-        const input = document.createElement('input');
-        input.type = 'email';
-        input.id = 'emailLinkEmailInput';
-        input.placeholder = 'you@example.com';
-        input.autocomplete = 'email';
-        input.style.width = '100%';
-        input.style.padding = '12px 14px';
-        input.style.borderRadius = '14px';
-        input.style.border = '1px solid rgba(255,255,255,.08)';
-        input.style.background = 'rgba(255,255,255,.04)';
-        input.style.color = 'rgba(255,255,255,.95)';
-
-        const actions = document.createElement('div');
-        actions.style.display = 'flex';
-        actions.style.gap = '10px';
-        actions.style.marginTop = '12px';
-        actions.style.flexWrap = 'wrap';
-
-        const sendBtn = document.createElement('button');
-        sendBtn.type = 'button';
-        sendBtn.id = 'emailLinkSendBtn';
-        sendBtn.className = 'glow-btn';
-        sendBtn.textContent = 'Send Login Link';
-
-        const backBtn = document.createElement('button');
-        backBtn.type = 'button';
-        backBtn.id = 'emailLinkBackBtn';
-        backBtn.className = 'ghost-btn';
-        backBtn.textContent = 'Back';
-
-        actions.appendChild(sendBtn);
-        actions.appendChild(backBtn);
-
-        panel.appendChild(label);
-        panel.appendChild(input);
-        panel.appendChild(actions);
-
-        overlayBody.appendChild(panel);
-
-        return panel;
-      }
-
-      function showEmailPanel() {
-        const panel = ensureEmailPanel();
-        if (!panel) return;
-
-        // Hide auth actions while panel is visible (prevents duplicate submissions UI)
-        const actionsWrap = document.querySelector('#authOverlay .auth-actions');
-        if (actionsWrap) actionsWrap.style.display = 'none';
-
-        panel.style.display = 'block';
-        panel.setAttribute('aria-hidden', 'false');
-
-        const input = document.getElementById('emailLinkEmailInput');
-        if (input) {
-          try {
-            input.focus({ preventScroll: true });
-          } catch {
-            input.focus();
-          }
-        }
-      }
-
-      function hideEmailPanel() {
-        const panel = getEmailPanelEl();
-        if (!panel) return;
-        panel.style.display = 'none';
-        panel.setAttribute('aria-hidden', 'true');
-
-        const actionsWrap = document.querySelector('#authOverlay .auth-actions');
-        if (actionsWrap) actionsWrap.style.display = '';
-      }
-
-      // Route “Continue with Email” into the panel
-      authEmailBtn?.addEventListener('click', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-
-        // Always show panel first (UI must not “do nothing”)
-        const auth = getAuthOrNull();
-        if (!auth) {
-          setStatusIfPossible('Firebase auth not ready yet. Please try again.');
-          return;
-        }
-
-        setStatusIfPossible('Enter your email to receive login link.');
-        setAuthButtonsBack();
-        showEmailPanel();
-      });
-
-      // Email link system (delegated click; works even with dynamically created panel)
-
-      async function handleEmailLinkSend() {
-        console.log('[auth] handler started');
-        setStatusIfPossible('Sending login link...');
-
-        const auth = typeof window.getAuthOrNull === 'function' ? window.getAuthOrNull() : null;
-        if (!auth) {
-          setStatusIfPossible('Firebase Auth is not ready. Please reload and try again.');
-          return;
-        }
-
-        const inputEl = document.getElementById('emailLinkInput') || document.getElementById('emailLinkEmailInput');
-        const btnEl = document.getElementById('emailLinkSendBtn');
-        if (!inputEl) {
-          setStatusIfPossible('Please enter your email.');
-          return;
-        }
-
-        const email = String(inputEl.value || '').trim();
-        if (!email) {
-          setStatusIfPossible('Please enter your email.');
-          inputEl.focus?.();
-          return;
-        }
-        if (!email.includes('@')) {
-          setStatusIfPossible('Please enter a valid email.');
-          inputEl.focus?.();
-          return;
-        }
-
-        if (btnEl && btnEl.disabled) return;
-
-        // Prevent double click while sending
-        if (btnEl) btnEl.disabled = true;
-        try {
-          const actionCodeSettings = {
-            url: window.location.origin + window.location.pathname,
-            handleCodeInApp: true,
-          };
-
-          localStorage.setItem('habitTracker.auth.pendingEmail', email);
-
-          if (typeof auth.sendSignInLinkToEmail !== 'function') {
-
-            throw new Error('Email link auth is not available in this build.');
-          }
-
-          await auth.sendSignInLinkToEmail(email, actionCodeSettings);
-          setStatusIfPossible('Check your email for login link.');
-        } catch (err) {
-          const msg = err && err.message ? err.message : 'Could not send login link. Please try again.';
-          setStatusIfPossible(msg);
-        } finally {
-          if (btnEl) btnEl.disabled = false;
-        }
-      }
-
-      if (!window.__emailLinkDelegationInstalled) {
-        window.__emailLinkDelegationInstalled = true;
-
-        document.addEventListener('click', async (e) => {
-          const btn = e.target && e.target.closest ? e.target.closest('#emailLinkSendBtn') : null;
-          if (!btn) return;
-
-          e.preventDefault();
-          e.stopPropagation();
-
-          console.log('[auth] send email link clicked');
-          await handleEmailLinkSend();
-        });
-      }
-
-      // Back button (still dynamic, but safe to bind directly once panel exists)
-      (function bindEmailPanelBackOnce() {
-        if (window.__EMAIL_LINK_BACK_BOUND__) return;
-        window.__EMAIL_LINK_BACK_BOUND__ = true;
-
-        const bindBack = () => {
-          const backBtn = document.getElementById('emailLinkBackBtn');
-          if (!backBtn) return false;
-          if (backBtn.__bound) return true;
-          backBtn.__bound = true;
-          backBtn.addEventListener('click', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            setStatusIfPossible('');
-            hideEmailPanel();
-          });
-          return true;
-        };
-
-        queueMicrotask(bindBack);
-        const obs = new MutationObserver(() => {
-          bindBack();
-        });
-        obs.observe(document.body, { childList: true, subtree: true });
-        setTimeout(() => obs.disconnect(), 5000);
-      })();
-
-      if (authPasskeyBtn && !window.__PASSKEY_REGISTER_BOUND__) {
-        window.__PASSKEY_REGISTER_BOUND__ = true;
-
-        authPasskeyBtn.addEventListener('click', async () => {
-          // Single-flight guard
-          if (window.__PASSKEY_REGISTER_IN_FLIGHT__) return;
-          window.__PASSKEY_REGISTER_IN_FLIGHT__ = true;
-
-          const emailPanel = document.getElementById('emailLinkPanel');
-          if (emailPanel) emailPanel.style.display = 'none';
-
-          const authStatus = document.getElementById('authStatus');
-          let currentStep = 'initial';
-          let succeeded = false;
-
-          const setStatus = (msg) => {
-            if (authStatus) authStatus.textContent = msg;
-          };
-
-          // fetch helper (15s timeout)
-          const fetchWithTimeout = async (url, opts, timeoutMs) => {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-            try {
-              const merged = { ...opts, signal: controller.signal };
-              const res = await fetch(url, merged);
-              return res;
-            } finally {
-              clearTimeout(timer);
-            }
-          };
-
-          try {
-            console.log('[passkey] click');
-
-            setStatus('Checking signed-in account...');
-            currentStep = 'firebase_user_ready';
-
-            if (!window.PublicKeyCredential) {
-              setStatus('Could not create the Passkey on this device.');
-              return;
-            }
-
-            const auth = window.getAuthOrNull && window.getAuthOrNull();
-            const user = auth && auth.currentUser;
-            console.log('[passkey] firebase user ready');
-
-            // SIGNED IN: preserve existing registration flow.
-            if (user) {
-              console.log('[passkey] token acquired');
-              const idToken = await user.getIdToken();
-
-              // STEP: register-options
-              console.log('[passkey] requesting options');
-              currentStep = 'register-options';
-              setStatus('Preparing Passkey registration...');
-
-              let optionsRes;
-              try {
-                optionsRes = await fetchWithTimeout(
-                  '/api/passkey/register-options',
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${idToken}`,
-                    },
-                    body: JSON.stringify({}),
-                  },
-                  15000,
-                );
-              } catch (err) {
-                if (authStatus) setStatus('Registration options request timed out. Please try again.');
-                return;
-              }
-
-              let optionsJson = null;
-              try {
-                optionsJson = await optionsRes.json();
-              } catch {}
-
-              if (!optionsRes.ok || !optionsJson?.ok) {
-                setStatus('Could not create registration options. Please try again.');
-                return;
-              }
-
-              console.log('[passkey] options received');
-
-              const { sessionId, options } = optionsJson;
-
-              // If excludeCredentials is non-empty, do not attempt another registration.
-              if (options && Array.isArray(options.excludeCredentials) && options.excludeCredentials.length > 0) {
-                setStatus('This account already has a Passkey. Please use Passkey Login after logging out.');
-                return;
-              }
-
-              if (typeof window.startRegistration !== 'function') {
-                setStatus('Could not create the Passkey on this device.');
-                return;
-              }
-
-              // STEP: startRegistration
-              console.log('[passkey] starting browser registration');
-              currentStep = 'startRegistration';
-              setStatus('Waiting for your device Passkey prompt...');
-
-              const registrationPromise = window.startRegistration(options);
-              let credential;
-
-              try {
-                credential = await Promise.race([
-                  registrationPromise,
-                  new Promise((_, reject) => setTimeout(() => reject(new Error('PASSKEY_PROMPT_TIMEOUT')), 90000)),
-                ]);
-              } catch (err) {
-                const name = err && err.name ? String(err.name) : '';
-                const msg = err && err.message ? String(err.message) : '';
-
-                if (msg === 'PASSKEY_PROMPT_TIMEOUT') {
-                  setStatus('Passkey prompt timed out. Please try again.');
-                  return;
-                }
-
-                const cancelled =
-                  name === 'NotAllowedError' ||
-                  name === 'AbortError' ||
-                  /cancel|dismiss|user/i.test(msg) ||
-                  /notallowed/i.test(name);
-
-                setStatus(cancelled ? 'Passkey creation was cancelled.' : 'Could not create the Passkey on this device.');
-                return;
-              }
-
-              console.log('[passkey] browser credential received');
-
-              // STEP: register-verify
-              console.log('[passkey] sending verification');
-              currentStep = 'register-verify';
-              setStatus('Verifying Passkey...');
-
-              let verifyRes;
-              try {
-                verifyRes = await fetchWithTimeout(
-                  '/api/passkey/register-verify',
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      Authorization: `Bearer ${idToken}`,
-                    },
-                    body: JSON.stringify({
-                      sessionId,
-                      credential,
-                      deviceName: 'Habit Tracker',
-                    }),
-                  },
-                  15000,
-                );
-              } catch (err) {
-                setStatus('Passkey verification request timed out. Please try again.');
-                return;
-              }
-
-              console.log('[passkey] verification response received');
-
-              let verifyJson = null;
-              try {
-                verifyJson = await verifyRes.json();
-              } catch {}
-
-              if (!verifyRes.ok || !verifyJson?.ok) {
-                const code = verifyJson?.error ? String(verifyJson.error) : '';
-                if (code === 'CREDENTIAL_ALREADY_REGISTERED') {
-                  setStatus('This Passkey is already registered.');
-                  return;
-                }
-
-                setStatus('Passkey verification failed. Please try again.');
-                return;
-              }
-
-              console.log('[passkey] success');
-
-              // Success path: set final status exactly once and never override.
-              succeeded = true;
-              setStatus('Passkey registered successfully.');
-              closeAuthOverlay();
-              return;
-            }
-
-            // SIGNED OUT: passkey login flow.
-            setStatus('Preparing Passkey login...');
-            currentStep = 'login-options';
-
-            const passkeyAuthOptionsRes = await fetchWithTimeout(
-              '/api/passkey/auth-options',
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({}),
-              },
-              15000,
-            ).catch(() => null);
-
-            if (!passkeyAuthOptionsRes || !passkeyAuthOptionsRes.ok) {
-              setStatus('Could not create authentication options. Please try again.');
-              return;
-            }
-
-            const passkeyAuthOptionsJson = await passkeyAuthOptionsRes.json().catch(() => null);
-            if (!passkeyAuthOptionsJson?.ok) {
-              setStatus('Could not create authentication options. Please try again.');
-              return;
-            }
-
-            const { sessionId, options } = passkeyAuthOptionsJson;
-
-            if (typeof window.startAuthentication !== 'function') {
-              setStatus('Could not create the Passkey on this device.');
-              return;
-            }
-
-            currentStep = 'startAuthentication';
-            setStatus('Waiting for your device Passkey prompt...');
-
-            const authenticationPromise = window.startAuthentication(options);
-            let loginCredential;
-
-            try {
-              loginCredential = await Promise.race([
-                authenticationPromise,
-                new Promise((_, reject) => setTimeout(() => reject(new Error('PASSKEY_PROMPT_TIMEOUT')), 90000)),
-              ]);
-            } catch (err) {
-              const name = err && err.name ? String(err.name) : '';
-              const msg = err && err.message ? String(err.message) : '';
-
-              if (msg === 'PASSKEY_PROMPT_TIMEOUT') {
-                setStatus('Passkey prompt timed out. Please try again.');
-                return;
-              }
-
-              const cancelled =
-                name === 'NotAllowedError' ||
-                name === 'AbortError' ||
-                /cancel|dismiss|user/i.test(msg) ||
-                /notallowed/i.test(name);
-
-              setStatus(cancelled ? 'Passkey login was cancelled.' : 'Could not authenticate with this Passkey.');
-              return;
-            }
-
-            currentStep = 'auth-verify';
-            setStatus('Verifying Passkey...');
-
-            const authVerifyRes = await fetchWithTimeout(
-              '/api/passkey/auth-verify',
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  sessionId,
-                  credential: loginCredential,
-                }),
-              },
-              15000,
-            ).catch(() => null);
-
-            if (!authVerifyRes || !authVerifyRes.ok) {
-              setStatus('Passkey verification failed. Please try again.');
-              return;
-            }
-
-            const authVerifyJson = await authVerifyRes.json().catch(() => null);
-            if (!authVerifyJson?.ok || !authVerifyJson?.firebaseCustomToken) {
-              setStatus('Passkey verification failed. Please try again.');
-              return;
-            }
-
-            const firebaseCustomToken = authVerifyJson.firebaseCustomToken;
-
-            currentStep = 'signInWithCustomToken';
-            setStatus('Signing you in...');
-
-            const fbAuth = window.firebase && typeof window.firebase.auth === 'function' ? window.firebase.auth() : null;
-            if (!fbAuth || typeof fbAuth.signInWithCustomToken !== 'function') {
-              setStatus('Firebase auth not ready. Please try again.');
-              return;
-            }
-
-            await fbAuth.signInWithCustomToken(firebaseCustomToken);
-
-            succeeded = true;
-            setStatus('Signed in successfully.');
-            closeAuthOverlay();
-
-          } catch (error) {
-            if (succeeded) return;
-
-            console.error('[passkey] failed at step:', currentStep, {
-              name: error?.name,
-              message: error?.message,
-            });
-
-            const name = error && error.name ? String(error.name) : '';
-            const msg = error && error.message ? String(error.message) : '';
-
-            const cancelled =
-              name === 'NotAllowedError' ||
-              name === 'AbortError' ||
-              /cancel|dismiss|user/i.test(msg) ||
-              /notallowed/i.test(name);
-
-            if (cancelled) setStatus('Passkey flow was cancelled.');
-            else setStatus('Passkey verification failed. Please try again.');
-          } finally {
-            window.__PASSKEY_REGISTER_IN_FLIGHT__ = false;
-          }
-        });
-      }
-
-
-
-
-
       const statusEl = document.getElementById('authStatus');
-
-      // Route Account-screen auth buttons (Settings > Account) to the existing overlay auth actions.
-      // This keeps all auth implementation in one place (overlay logic near the bottom of this file).
-      try {
-        const accountEmailBtn = document.getElementById('accountEmailBtn');
-        const accountPasskeyBtn = document.getElementById('accountPasskeyBtn');
-        if (accountEmailBtn && authEmailBtn) {
-          accountEmailBtn.addEventListener('click', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            openAuthOverlay();
-            authEmailBtn.click();
-          });
-        }
-        if (accountPasskeyBtn && authPasskeyBtn) {
-          accountPasskeyBtn.addEventListener('click', (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            openAuthOverlay();
-            authPasskeyBtn.click();
-          });
-        }
-      } catch {}
-
 
       function setStatus(msg) {
         if (statusEl) statusEl.textContent = msg;
@@ -5088,35 +4338,35 @@ function playAlarmAudio(url) {
       // Auth screen visibility (startup only)
       // Requirement: show overlay on first app open unless user is already logged in
       // or previously chose Guest. Guest must not repeatedly block.
-      const shouldShowAuthOverlay = (() => {
+      (async () => {
+        const shouldShowAuthOverlay = (() => {
+          try {
+            const decided = localStorage.getItem('habitTracker.auth.decided') === 'true';
+            const uid = localStorage.getItem('habitTracker.auth.uid');
+
+            // Also check current Firebase user directly (most authoritative)
+            const auth = window.getAuthOrNull();
+            const firebaseUser = auth ? auth.currentUser : null;
+            if (firebaseUser || uid) return false;
+
+            return !decided;
+          } catch {
+            return true;
+          }
+        })();
+
+        // Mark that the decision was made at least once.
         try {
-          const decided = localStorage.getItem('habitTracker.auth.decided') === 'true';
-          const uid = localStorage.getItem('habitTracker.auth.uid');
-          if (uid) return false;
-          return !decided;
-        } catch {
-          return true;
+          localStorage.setItem('habitTracker.auth.decided', 'true');
+        } catch {}
+
+        if (shouldShowAuthOverlay) {
+          setStatus('Sign in with Google or continue as Guest.');
+          openAuthOverlay();
+        } else {
+          closeAuthOverlay();
         }
       })();
-
-      // Mark that the decision was made at least once.
-      try {
-        localStorage.setItem('habitTracker.auth.decided', 'true');
-      } catch {}
-
-      if (shouldShowAuthOverlay) {
-        setStatus('Choose a login method to continue.');
-        openAuthOverlay();
-      } else {
-        closeAuthOverlay();
-      }
-
-
-      // Firebase auth wiring is handled by the single document-level capturing
-      // click handler near the end of this file. No per-button handlers here.
-
-      // (Intentionally removed: getFirebaseAuthSafe(), setAuthStatusIfUnavailable(),
-      // and googleBtn click Firebase sign-in handler.)
 
       // Keep guest/cloud UI handlers below (UI-only, no auth execution).
 
@@ -5125,10 +4375,6 @@ function playAlarmAudio(url) {
         setStatus('');
         closeAuthOverlay();
       });
-
-
-
-
 
       enableCloudBtn?.addEventListener('click', async () => {
         // STEP 2D (write-only backup + queue enable): enable flag only here.
@@ -5140,429 +4386,6 @@ function playAlarmAudio(url) {
           setStatus('Cloud backup could not be enabled.');
         }
       });
-
-      // =============================
-      // Restore from Cloud (single read + safe merge)
-      // =============================
-
-      function showRestoreConfirm(els) {
-        els.restoreConfirmModal?.classList.add('is-open');
-        els.restoreConfirmModal?.setAttribute('aria-hidden', 'false');
-      }
-
-      function hideRestoreConfirm(els) {
-        els.restoreConfirmModal?.classList.remove('is-open');
-        els.restoreConfirmModal?.setAttribute('aria-hidden', 'true');
-      }
-
-      function isValidHHMM(hhmm) {
-        return typeof hhmm === 'string' && /^\d{2}:\d{2}$/.test(hhmm);
-      }
-
-      function validateAndCoerceSnapshot(snapshot) {
-        if (!snapshot || typeof snapshot !== 'object') return null;
-        const snap = snapshot.snapshot && typeof snapshot.snapshot === 'object' ? snapshot.snapshot : snapshot;
-
-        const habits = Array.isArray(snap.habits) ? snap.habits : null;
-        if (!habits) return null;
-
-        const xp = snap.xp && typeof snap.xp === 'object' ? snap.xp : null;
-        const streak = snap.streak && typeof snap.streak === 'object' ? snap.streak : null;
-
-        const out = {
-          habits,
-          xp,
-          streak,
-          meta: snap.meta && typeof snap.meta === 'object' ? snap.meta : {},
-          achievements: snap.achievements && typeof snap.achievements === 'object' ? snap.achievements : { unlocked: {} },
-        };
-
-        return out;
-      }
-
-      function mergeSnapshotIntoLocalState(cloudSnap) {
-        ensureStateShape();
-
-        const localHabits = Array.isArray(state.habits) ? state.habits : [];
-        const localById = new Map(localHabits.map((h) => [h && h.id ? h.id : null, h]));
-
-        const allCloudHabits = Array.isArray(cloudSnap.habits) ? cloudSnap.habits : [];
-
-        // Validate+coerce cloud habits; never replace local habit with empty/invalid values.
-        const cloudById = new Map();
-        for (const ch of allCloudHabits) {
-          if (!ch || typeof ch !== 'object') continue;
-          const id = typeof ch.id === 'string' ? ch.id : null;
-          if (!id) continue;
-
-          const name = typeof ch.name === 'string' ? ch.name : '';
-          const targetDays = safeNumber(ch.targetDays, 7);
-          const createdAt = safeNumber(ch.createdAt, Date.now());
-          const history = ch.history && typeof ch.history === 'object' ? ch.history : {};
-          const alarmTime = normalizeAlarmTimeToHHMM(ch.alarmTime);
-          const alarmSound = Math.max(1, Math.min(4, Number.isFinite(Number(ch.alarmSound)) ? Number(ch.alarmSound) : 1));
-          const alarmWeekdaysSelected = Array.isArray(ch.alarmWeekdaysSelected) ? ch.alarmWeekdaysSelected : null;
-
-          cloudById.set(id, {
-            id,
-            name,
-            targetDays,
-            createdAt,
-            history,
-            alarmTime,
-            alarmSound,
-            alarmWeekdaysSelected,
-          });
-        }
-
-        // Merge habits by habit.id:
-        // - if local habit exists and cloud habit has *valid non-empty* name/history, merge fields shallowly
-        // - if local habit exists but cloud fields are empty/invalid, keep local
-        // - if local habit missing, import cloud habit
-
-        const mergedHabits = [];
-        const usedCloudIds = new Set();
-
-        for (const lh of localHabits) {
-          if (!lh || typeof lh !== 'object' || !lh.id) continue;
-          const id = lh.id;
-          const cloudH = cloudById.get(id);
-
-          if (!cloudH) {
-            mergedHabits.push(lh);
-            continue;
-          }
-
-          usedCloudIds.add(id);
-
-          const nameToUse = typeof cloudH.name === 'string' && cloudH.name.trim() ? cloudH.name : lh.name;
-          const targetDaysToUse = Number.isFinite(Number(cloudH.targetDays)) && cloudH.targetDays >= 1 && cloudH.targetDays <= 7 ? cloudH.targetDays : lh.targetDays;
-          const createdAtToUse = Number.isFinite(Number(cloudH.createdAt)) ? cloudH.createdAt : lh.createdAt;
-
-          // History: only take cloud history if it is an object with at least one valid dateKey entry.
-          let historyToUse = lh.history;
-          if (cloudH.history && typeof cloudH.history === 'object') {
-            const hasAnyValid = Object.entries(cloudH.history).some(([k, v]) => /^\d{4}-\d{2}-\d{2}$/.test(k) && (v === 'done' || v === 'not_done'));
-            if (hasAnyValid) historyToUse = cloudH.history;
-          }
-
-          // Alarm fields: only update if cloud provides a valid alarmTime.
-          const alarmTimeToUse = isValidHHMM(cloudH.alarmTime) ? cloudH.alarmTime : lh.alarmTime;
-          const alarmSoundToUse = cloudH.alarmSound ? cloudH.alarmSound : lh.alarmSound;
-
-          // Weekdays: update only if cloud provides a non-empty array.
-          const allWeekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-          let alarmWeekdaysSelectedToUse = lh.alarmWeekdaysSelected;
-          if (Array.isArray(cloudH.alarmWeekdaysSelected) && cloudH.alarmWeekdaysSelected.length) {
-            const filtered = cloudH.alarmWeekdaysSelected.filter((d) => allWeekdays.includes(d));
-            if (filtered.length) alarmWeekdaysSelectedToUse = filtered;
-          }
-
-          mergedHabits.push({
-            ...lh,
-            name: nameToUse,
-            targetDays: targetDaysToUse,
-            createdAt: createdAtToUse,
-            history: historyToUse,
-            alarmTime: alarmTimeToUse,
-            alarmSound: alarmSoundToUse,
-            alarmWeekdaysSelected: alarmWeekdaysSelectedToUse,
-          });
-        }
-
-        // Import cloud-only habits.
-        for (const [id, cloudH] of cloudById.entries()) {
-          if (usedCloudIds.has(id)) continue;
-          // If cloud habit is too empty/invalid, skip.
-          if (!cloudH.name || !cloudH.name.trim()) continue;
-
-          // Ensure invariants.
-          mergedHabits.unshift({
-            id,
-            name: cloudH.name,
-            targetDays: cloudH.targetDays,
-            createdAt: cloudH.createdAt,
-            history: cloudH.history && typeof cloudH.history === 'object' ? cloudH.history : {},
-            alarmTime: normalizeAlarmTimeToHHMM(cloudH.alarmTime),
-            alarmSound: Math.max(1, Math.min(4, Number(cloudH.alarmSound) || 1)),
-            alarmWeekdaysSelected: Array.isArray(cloudH.alarmWeekdaysSelected) && cloudH.alarmWeekdaysSelected.length
-              ? cloudH.alarmWeekdaysSelected.filter((d) => allWeekdays.includes(d))
-              : allWeekdays,
-          });
-        }
-
-        state.habits = mergedHabits;
-
-        // Resolve derived/stored sections using existing application logic.
-        // - streak history: based on persisted completion records in habit.history
-        rebuildStreakHistoryFromHabitHistory();
-
-        // - XP totals: derived; also seed ledger stub.
-        seedXpLedgerFromHistory();
-
-        // - analytics UI depends on state.habits/history so no extra recompute needed beyond renderAnalytics().
-
-        // Ensure persisted alarmTime invariant for safety.
-        for (const habit of state.habits || []) {
-          if (!habit || typeof habit !== 'object') continue;
-          habit.alarmTime = normalizeAlarmTimeToHHMM(habit.alarmTime);
-        }
-
-        // Mark views dirty so UI refresh is correct.
-        state._dirtyViews.weekly = true;
-        state._dirtyViews.monthly = true;
-        state._dirtyViews.trash = true;
-
-        return true;
-      }
-
-      async function restoreFromCloudOnce(els) {
-        // Cloud restore is disabled in this build to enforce Firebase COMPAT ONLY.
-        // Do not call modular APIs (getFirestore/doc/getDoc/setDoc/etc.).
-        hideRestoreConfirm(els);
-        setStatus('Cloud restore unavailable in this build.');
-      }
-
-      // Connect existing restore confirmation button.
-      try {
-        const restoreBtn = document.getElementById('authRestoreFromCloudBtn');
-        const restoreConfirmRestoreBtn = document.getElementById('restoreConfirmRestoreBtn');
-        const restoreConfirmCancelBtn = document.getElementById('restoreConfirmCancelBtn');
-        const restoreConfirmCloseBtn = document.getElementById('restoreConfirmCloseBtn');
-        const restoreConfirmModalEl = document.getElementById('restoreConfirmModal');
-
-        if (restoreBtn && restoreConfirmModalEl && restoreConfirmRestoreBtn) {
-          restoreBtn.addEventListener('click', () => {
-            showRestoreConfirm({ restoreConfirmModal: restoreConfirmModalEl });
-          });
-
-          restoreConfirmCancelBtn?.addEventListener('click', () => {
-            hideRestoreConfirm({ restoreConfirmModal: restoreConfirmModalEl });
-          });
-
-          restoreConfirmCloseBtn?.addEventListener('click', () => {
-            hideRestoreConfirm({ restoreConfirmModal: restoreConfirmModalEl });
-          });
-
-          restoreConfirmRestoreBtn.addEventListener('click', () => {
-            restoreFromCloudOnce({
-              restoreConfirmModal: restoreConfirmModalEl,
-              currentView: els.currentView,
-            });
-          });
-        }
-      } catch {
-        // never break auth overlay / restore / queue engine
-      }
-
-      // =============================
-      // Sync Engine (local queue -> batched Firestore write)
-      // =============================
-      // Constraints from task:
-      // - localStorage remains source of truth
-      // - Firestore passive backup
-      // - queue processes only when authenticated AND cloudBackupExplicitlyEnabled
-      // - no automatic restore
-      // - no direct sync execution without queue trigger flag
-      // - never overwrite valid local data with empty cloud payloads (we only upload local snapshot)
-      // - must not block UI thread
-
-
-      const CLOUD_QUEUE_KEY = 'habitTracker.cloud.queue.v1';
-      const CLOUD_QUEUE_TRIG_KEY = 'habitTracker.cloud.queue.trigger';
-
-      function getCloudUid() {
-        try {
-          return localStorage.getItem('habitTracker.auth.uid');
-        } catch {
-          return null;
-        }
-      }
-
-      function isCloudEnabled() {
-        try {
-          return localStorage.getItem('habitTracker.cloud.enabled') === 'true';
-        } catch {
-          return false;
-        }
-      }
-
-      function isQueueTriggerEnabled() {
-        try {
-          return localStorage.getItem(CLOUD_QUEUE_TRIG_KEY) === 'true';
-        } catch {
-          return false;
-        }
-      }
-
-      function setQueueTriggerEnabled(v) {
-        try {
-          localStorage.setItem(CLOUD_QUEUE_TRIG_KEY, v ? 'true' : 'false');
-        } catch {}
-      }
-
-      function readQueue() {
-        try {
-          const raw = localStorage.getItem(CLOUD_QUEUE_KEY);
-          if (!raw) return [];
-          const q = JSON.parse(raw);
-          return Array.isArray(q) ? q : [];
-        } catch {
-          return [];
-        }
-      }
-
-      function writeQueue(q) {
-        try {
-          localStorage.setItem(CLOUD_QUEUE_KEY, JSON.stringify(q));
-        } catch {}
-      }
-
-      // Enqueue only; never sync here.
-      function enqueueCloudBackup(reason) {
-        try {
-          const uid = getCloudUid();
-          if (!uid) return;
-          if (!isCloudEnabled()) return;
-
-          // Throttle: if last queued item is very recent and identical-ish, keep queue small.
-          const q = readQueue();
-          const nowMs = Date.now();
-          const last = q[0];
-          if (last && typeof last === 'object' && last.kind === 'state' && nowMs - (last.queuedAtMs || 0) < 15000) {
-            // Replace payload timestamp only; keep queue length stable.
-            q[0] = { ...last, queuedAtMs: nowMs, reason: reason || last.reason };
-            writeQueue(q);
-            return;
-          }
-
-          const payload = {
-            kind: 'state',
-            queuedAtMs: nowMs,
-            reason: reason || 'local-change',
-            // capture only a validation-friendly subset for backup
-            state: {
-              habits: state && Array.isArray(state.habits) ? cloneData(state.habits) : [],
-              meta: state && state.meta && typeof state.meta === 'object' ? {
-                settings: state.meta.settings,
-                dailyQuests: state.meta.dailyQuests,
-                monthlySelected: state.meta.monthlySelected,
-                habitTrash: state.meta.habitTrash,
-                monthlyByMonthKey: state.meta.monthlyByMonthKey,
-                streakHistory: state.meta.streakHistory,
-                habitAlarmDismissals: state.meta.habitAlarmDismissals,
-              } : {},
-              xp: state && state.xp && typeof state.xp === 'object' ? cloneData(state.xp) : { total: 0, ledger: {} },
-              streak: state && state.streak && typeof state.streak === 'object' ? cloneData(state.streak) : { current: 0, best: 0 },
-              achievements: state && state.achievements && typeof state.achievements === 'object' ? cloneData(state.achievements) : { unlocked: {} },
-            },
-          };
-
-          q.unshift(payload);
-          // Cap queue size
-          const capped = q.slice(0, 25);
-          writeQueue(capped);
-
-          // queue trigger flag enables processor (per task constraint)
-          setQueueTriggerEnabled(true);
-        } catch {}
-      }
-
-      let cloudProcessInFlight = false;
-      let cloudProcessTimerHandle = null;
-
-      const CLOUD_QUEUE_RETRY_MAX = 5;
-      const CLOUD_QUEUE_RETRY_BASE_MS = 1500;
-      const CLOUD_QUEUE_RETRY_MAX_MS = 60 * 1000;
-
-      function shouldProcessQueueNow() {
-        try {
-          // STRICT execution gate: all conditions must be true
-          const uid = getCloudUid();
-          const cloudEnabled = isCloudEnabled();
-          const queueTrigger = isQueueTriggerEnabled();
-          const online = navigator.onLine === true;
-          return !!(uid && cloudEnabled && queueTrigger && online);
-        } catch {
-          return false;
-        }
-      }
-
-      function getRetryCountForLatestItemId(queue) {
-        // We keep retry counters on each queue item (crash-safe because stored in localStorage).
-        // The latest item to attempt is always index 0 (newest).
-        const latest = queue && queue[0];
-        const n = latest && typeof latest.retryCount === 'number' ? latest.retryCount : 0;
-        return Math.max(0, Math.floor(n));
-      }
-
-      function scheduleProcessQueue(reason) {
-        // Debounce + no duplicate timers.
-        if (cloudProcessInFlight) return;
-        if (!shouldProcessQueueNow()) return;
-
-        if (cloudProcessTimerHandle) return;
-
-        // Quick coalescing delay; multiple triggers in a burst still schedule once.
-        cloudProcessTimerHandle = setTimeout(() => {
-          cloudProcessTimerHandle = null;
-          processQueue(reason).catch(() => {});
-        }, 250);
-      }
-
-      async function processQueue(reason) {
-        if (cloudProcessInFlight) return;
-        cloudProcessInFlight = true;
-
-        try {
-          // Strict execution gate: exit immediately if any condition fails.
-          if (!shouldProcessQueueNow()) return;
-
-          const uid = getCloudUid();
-          if (!uid) return;
-
-          const q = readQueue();
-          if (!q.length) {
-            setQueueTriggerEnabled(false);
-            return;
-          }
-
-          // Firebase cloud sync is disabled in this build to enforce Firebase COMPAT ONLY.
-          // Do not call modular SDK functions (getFirestore/doc/setDoc/etc.).
-          setStatus('Cloud sync unavailable in this build.');
-          return;
-
-
-          // Firebase cloud sync is disabled in this build to enforce Firebase COMPAT ONLY.
-          // Modular SDK calls removed. Keep queue mechanism in place (local-only enqueue).
-          // No-op to preserve offline stability.
-          return;
-        } finally {
-          cloudProcessInFlight = false;
-        }
-      }
-
-
-
-      // Trigger queue processor only when explicitly allowed (flag) and online.
-      window.addEventListener('online', () => {
-        // Strict idle requirement: do nothing unless ALL conditions are true.
-        if (!shouldProcessQueueNow()) return;
-        scheduleProcessQueue('online');
-      });
-
-
-      // NOTE: Intentionally DO NOT patch/override `save()`.
-      // Queueing is triggered by explicit user actions and offline queue creation only.
-
-      // initial scheduling if queue already exists (queue-only processor)
-      try {
-        if (readQueue().length && isCloudEnabled() && isQueueTriggerEnabled() && navigator.onLine) scheduleProcessQueue('init-queue');
-      } catch {}
-
-
-
-
     } catch {
       // Never break app if auth overlay elements are missing.
     }
@@ -5573,15 +4396,4 @@ function playAlarmAudio(url) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
   else boot();
 })();
-
-
-
-
-
-
-
-
-
-
-
 

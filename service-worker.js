@@ -14,7 +14,7 @@
 
 // Bump cache name when changing offline behavior.
 // NOTE: bump is required to avoid mobile getting stale cached auth code / index.
-const CACHE_NAME = "habitTracker.shell.v4";
+const CACHE_NAME = "habitTracker.shell.v5";
 
 // (Intentionally only used for readability; caching is done via explicit addAll below.)
 // Keep list for readability (install uses a concrete addAll for guaranteed required files)
@@ -23,19 +23,18 @@ const SHELL_CACHE_URLS = [
   "/index.html",
   "/style.css",
   "/script.js",
+  "/spatial-effects.js",
   "/manifest.json",
   "/privacy.html",
   "/icon.png",
   "/icon-192.png",
   "/icon-512.png",
 
-  // Sounds (required by task)
+  // Sounds (used by app)
   "/sounds/alarm1.mp3",
   "/sounds/alarm2.mp3",
   "/sounds/alarm3.mp3",
   "/sounds/alarm4.mp3",
-  "/sounds/alarm5.mp3",
-  "/sounds/alarm6.mp3",
 ];
 
 self.addEventListener("install", (event) => {
@@ -54,20 +53,17 @@ self.addEventListener("install", (event) => {
         '/index.html',
         '/style.css',
         '/script.js',
+        '/spatial-effects.js',
         '/manifest.json',
         '/privacy.html',
         '/firebaseConfig.js',
         '/icon.png',
-        // Avoid caching potentially problematic icon-192.png during offline DevTools tests.
-        // /icon-192.png is still declared in manifest; the browser will validate/serve it.
         '/icon-512.png',
 
         '/sounds/alarm1.mp3',
         '/sounds/alarm2.mp3',
         '/sounds/alarm3.mp3',
         '/sounds/alarm4.mp3',
-        '/sounds/alarm5.mp3',
-        '/sounds/alarm6.mp3',
       ];
 
       await Promise.all(
@@ -132,28 +128,7 @@ self.addEventListener("fetch", (event) => {
   // Only handle same-origin requests.
   if (!isSameOrigin(url)) return;
 
-  // Firebase email-link / auth callback navigation URLs:
-  // Do NOT cache and make network errors non-fatal.
-  // This prevents the app-shell cache fallback from breaking Firebase oobCode flows.
-  const isFirebaseEmailLinkCallback =
-    request.mode === "navigate" &&
-    (
-      url.searchParams.has("oobCode") ||
-      url.searchParams.has("mode") ||
-      url.searchParams.has("apiKey")
-    );
-
-  if (isFirebaseEmailLinkCallback) {
-    event.respondWith(
-      fetch(request).catch(() => {
-        // Fallback to app shell so we never throw unhandled "Failed to fetch".
-        return caches.match("/index.html");
-      })
-    );
-    return;
-  }
-
-  // Network-first with cache fallback for the app shell navigation.
+// Network-first with cache fallback for the app shell navigation.
   // Requirement: app must open without internet after first load/install.
   if (request.method === "GET" && isProbablyAppNavigation(request)) {
     event.respondWith(
@@ -209,6 +184,7 @@ self.addEventListener("fetch", (event) => {
       const isStaticAsset =
         path === "/style.css" ||
         path === "/script.js" ||
+        path === "/spatial-effects.js" ||
         path === "/firebaseConfig.js" ||
         path === "/manifest.json" ||
         path === "/privacy.html" ||

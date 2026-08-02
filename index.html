@@ -8,13 +8,28 @@
     />
 
     <title>Habits — Daily Tracker</title>
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#050a18" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Habits" />
+    <meta name="format-detection" content="telephone=no" />
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icon.png" type="image/png" />
     <link rel="apple-touch-icon" href="icon.png" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <!-- Spatial Glass 3D background layers (decorative only) -->
+    <div class="spatial-bg" aria-hidden="true">
+      <div class="spatial-orb spatial-orb--1"></div>
+      <div class="spatial-orb spatial-orb--2"></div>
+      <div class="spatial-orb spatial-orb--3"></div>
+      <div class="spatial-spotlight"></div>
+      <div class="spatial-vignette"></div>
+    </div>
+
     <div class="app">
       <!-- Auth Overlay (Phase 1: UI-only, hidden by default) -->
       <section class="auth-overlay" id="authOverlay" aria-hidden="true">
@@ -67,20 +82,7 @@
               >
                 Continue as Guest
               </button>
-              <button
-                class="ghost-btn auth-btn"
-                type="button"
-                id="authEmailBtn"
-              >
-                Continue with Email
-              </button>
-              <button
-                class="ghost-btn auth-btn"
-                type="button"
-                id="authPasskeyBtn"
-              >
-                Continue with Passkey
-              </button>
+
             </div>
 
 
@@ -598,15 +600,9 @@
                   <button class="ghost-btn" id="accountGoogleOverlayBtn" type="button" style="flex: 1 1 auto; min-width: 180px; display:none;">
                     Continue with Google
                   </button>
-                  <button class="ghost-btn" id="accountEmailBtn" type="button" style="flex: 1 1 auto; min-width: 180px;">
-                    Continue with Email Link
-                  </button>
-                  <button class="ghost-btn" id="accountPasskeyBtn" type="button" style="flex: 1 1 auto; min-width: 180px;">
-                    Continue with Passkey
-                  </button>
                 </div>
 
-                <!-- Visible auth methods are handled by the existing auth overlay buttons (authEmailBtn/authPasskeyBtn). -->
+                <!-- Visible auth methods are handled by the existing auth overlay buttons. -->
 
 
                 <div class="account-hint" id="accountGuestHint">
@@ -1095,10 +1091,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
 
-    <!-- Passkey browser integration (minimal) -->
-    <script src="./simplewebauthn-browser.bundle.js"></script>
-
     <script src="script.js"></script>
+    <script src="spatial-effects.js"></script>
     <script>
       // Keep in sync with this file: compat init + app boot happen in script.js.
 

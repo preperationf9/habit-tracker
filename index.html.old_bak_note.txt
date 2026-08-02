@@ -1,3 +1,0 @@
-Created index.html by copying index_fixed.html.
-Backed up original index.html to index_old.html (per request).
-

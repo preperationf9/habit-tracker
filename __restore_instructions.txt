@@ -1,2 +1,0 @@
-Restore script.js from backups/script.js.bak_pre_auth_fix_20260614_000000 then verify app works.
-
