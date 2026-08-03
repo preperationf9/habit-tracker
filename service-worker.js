@@ -14,16 +14,19 @@
 
 // Bump cache name when changing offline behavior.
 // NOTE: bump is required to avoid mobile getting stale cached auth code / index.
-const CACHE_NAME = "habitTracker.shell.v5";
+// v6: Spatial Glass 3D asset cache — stale-while-revalidate so returning
+//     users pick up the new UI on their next visit without waiting for a
+//     full SW reinstall round-trip.
+const CACHE_NAME = "habitTracker.shell.v6";
 
 // (Intentionally only used for readability; caching is done via explicit addAll below.)
 // Keep list for readability (install uses a concrete addAll for guaranteed required files)
 const SHELL_CACHE_URLS = [
   "/",
   "/index.html",
-  "/style.css",
-  "/script.js",
-  "/spatial-effects.js",
+  "/style.css?v=3d-2026",
+  "/script.js?v=3d-2026",
+  "/spatial-effects.js?v=3d-2026",
   "/manifest.json",
   "/privacy.html",
   "/icon.png",
@@ -51,9 +54,9 @@ self.addEventListener("install", (event) => {
       const urlsToCache = [
         '/',
         '/index.html',
-        '/style.css',
-        '/script.js',
-        '/spatial-effects.js',
+        '/style.css?v=3d-2026',
+        '/script.js?v=3d-2026',
+        '/spatial-effects.js?v=3d-2026',
         '/manifest.json',
         '/privacy.html',
         '/firebaseConfig.js',
@@ -154,7 +157,14 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Cache-first for static assets (required: CSS/JS/images/icons/sounds)
+  // Stale-while-revalidate for static assets (CSS/JS/images/icons/sounds).
+  //
+  // WHY: cache-first caused the Spatial Glass 3D upgrade to be invisible for
+  // returning users/PWAs — the old style.css/script.js stayed in the cache and
+  // was served forever (until a full SW reinstall round-trip). Stale-while-
+  // revalidate serves the cached copy instantly for offline/performance, but
+  // ALWAYS re-fetches from the network in the background and refreshes the
+  // cache. Returning users therefore see the new UI on their next visit.
   if (request.method !== "GET") return;
 
   event.respondWith(
@@ -206,16 +216,37 @@ self.addEventListener("fetch", (event) => {
         return fetch(request);
       }
 
-      const cached = await cache.match(path);
-      if (cached) return cached;
+      // Match against BOTH the exact URL and the plain path so that
+      // cache-busted requests (e.g. style.css?v=3d) can reuse the cached
+      // copy while still being revalidated against the network.
+      const cacheKey = url.href;
+      const cached = (await cache.match(cacheKey)) || (await cache.match(path));
 
-      try {
-        const resp = await fetch(request);
-        if (resp && resp.ok) await cache.put(path, resp.clone());
-        return resp;
-      } catch (e) {
-        return cached || Promise.reject(e);
+      // Kick off a background revalidation of this asset.
+      const revalidate = fetch(request)
+        .then((resp) => {
+          if (resp && resp.ok) {
+            cache.put(cacheKey, resp.clone());
+          }
+          return resp;
+        })
+        .catch(() => null);
+
+      // If we already have something cached, serve it instantly and let the
+      // revalidation update the cache in the background.
+      if (cached) {
+        // Don't await — fire-and-forget, but keep the worker alive enough.
+        event.waitUntil(revalidate.then(() => {}));
+        return cached;
       }
+
+      // Nothing cached yet: wait for the network (or fail).
+      const fresh = await revalidate;
+      if (fresh) return fresh;
+
+      // Fully offline and nothing cached: try path-keyed cache then fail.
+      const pathCached = await cache.match(path);
+      return pathCached || Promise.reject(new Error("Offline: not cached"));
     })(),
   );
 });
