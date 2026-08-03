@@ -1097,8 +1097,18 @@
       // Keep in sync with this file: compat init + app boot happen in script.js.
 
       // Service worker registration remains optional/non-fatal.
+      // Auto-refresh when a NEW service worker takes control, so the latest
+      // UI (Spatial Glass 3D) is shown immediately to returning users instead
+      // of the old cached CSS/JS until a manual refresh.
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
+          let refreshing = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (refreshing) return;
+            refreshing = true;
+            window.location.reload();
+          });
+
           navigator.serviceWorker
             .register("/service-worker.js")
             .then(() => console.log("[pwa] service worker registered"))
