@@ -49,8 +49,9 @@
 
           <h2>1) Data We Collect</h2>
           <ul>
-            <li><strong>Nothing is sent to a server.</strong> The app works locally.</li>
-            <li>Habit data (habit names, targets, and your history for each day) is stored in <strong>your browser’s localStorage</strong>.</li>
+            <li><strong>Habit data</strong> (habit names, targets, completion history, streaks, XP) is stored in <strong>your browser’s localStorage</strong> and never leaves your device unless you explicitly sign in.</li>
+            <li>When you use <strong>Google Sign-In</strong>, Firebase Authentication processes your email, display name, and Google account ID. A copy of your email and display name is stored locally in your browser’s localStorage to personalize the app.</li>
+            <li><strong>No habit data is sent to any server.</strong> All habit tracking data remains in your browser.</li>
           </ul>
 
           <h2>2) How We Use Data</h2>
@@ -59,19 +60,34 @@
             <li>Display your habit checklist and history</li>
             <li>Calculate progress and streaks (weekly/monthly views)</li>
             <li>Calculate XP/levels based on your current habit statuses</li>
-
+            <li>If signed in: personalize the account section with your name and email</li>
           </ul>
 
           <h2>3) Cookies</h2>
-          <p>The app does not use cookies. Your data is stored in localStorage.</p>
+          <p>The app does not use cookies for its own functionality. Firebase Authentication may use session cookies as part of its authentication flow when you sign in with Google.</p>
 
           <h2>4) Third-Party Services</h2>
-          <p>There are no third-party services used by this app to collect your personal information.</p>
+          <p>This app uses the following third-party services:</p>
+          <ul>
+            <li><strong>Firebase Authentication</strong> — handles Google Sign-In when you choose to sign in. Firebase receives your Google account credentials during sign-in.</li>
+            <li><strong>Google Analytics for Firebase (GA4)</strong> — collects anonymous usage analytics. No personal information is sent to analytics.</li>
+            <li><strong>Firebase Firestore</strong> — the SDK is loaded but is <strong>not actively used</strong> to store or sync your habit data.</li>
+          </ul>
+          <p>No third-party service receives your habit names, targets, completion history, or any other tracking data.</p>
 
-          <h2>5) Your Choices</h2>
-          <p>You can delete your data at any time using the app’s <strong>Delete all</strong> option, or by clearing site data in your browser.</p>
+          <h2>5) Data Sharing</h2>
+          <p>We do not sell, trade, or share your personal information with any third party. Firebase Authentication and Google Analytics are the only services that receive any data, and only as described above.</p>
 
-          <h2>6) Contact</h2>
+          <h2>6) Your Choices</h2>
+          <p>You can:</p>
+          <ul>
+            <li>Use the app in <strong>Guest mode</strong> without signing in — no personal data is collected.</li>
+            <li>Delete all data at any time using the app’s <strong>Delete all</strong> option in Settings, or by clearing site data in your browser.</li>
+            <li>Sign out from Settings to remove stored authentication information from localStorage.</li>
+            <li>Clear browser site data to remove all locally stored information.</li>
+          </ul>
+
+          <h2>7) Contact</h2>
           <p>If you have questions about this privacy policy, you can contact the developer of this app at:</p>
           <p><strong>Email:</strong> amitaarya9754@gmail.com</p>
 
